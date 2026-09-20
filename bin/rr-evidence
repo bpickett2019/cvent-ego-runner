@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec python3 "$PROJECT/app/rr-evidence.py" "$@"

@@ -13,6 +13,7 @@ import { RUN_POLICY } from "./run-policy.mjs";
 import { mountWorkbooks } from "./workbooks.mjs";
 import { acknowledgeSessionIncident } from "./session-security.mjs";
 import { provisionCleanBrowser, steelOrigin } from "./clean-browser.mjs";
+import { transitionBrowser } from "./browser-ownership.mjs";
 
 // Native Pi and its tools inherit owner-only artifact permissions.
 process.umask(0o077);
@@ -25,6 +26,7 @@ const app = express();
 const cventApi = new CventConnection();
 let targetLookup = false;
 let returningControl = false;
+let browserEpoch = 0;
 const viewerProxy = httpProxy.createProxyServer({ target: "http://127.0.0.1:3400", ws: true, changeOrigin: true });
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));
 const writeJson = async (path, value) => {
@@ -120,10 +122,15 @@ async function provisionBrowser(record, cancelled) {
 const connection = mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, provisionBrowser });
 mountWorkbooks(app, { root, isBusy: () => connection.isBusy() });
 app.get("/api/state", async (_req, res) => res.json(await readJson(statePath)));
+async function browserStopped(runtime) {
+  if (!/^[0-9a-f-]{36}$/.test(runtime.jobId || "")) return false;
+  try { return (await readJson(resolve(root, "data/jobs", runtime.jobId, "receipts/steel-cleanup.json"))).status === "STOPPED"; }
+  catch { return false; }
+}
 app.get("/api/runtime", async (_req, res) => {
   const runtime = await readJson(runtimePath);
   const { runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent } = runtime;
-  res.json({ loginFirst: true, runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
+  res.json({ loginFirst: true, browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
 });
 async function selectTarget(name) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
@@ -142,6 +149,7 @@ app.post("/api/target", async (req, res) => {
   res.json(await selectTarget(eventName(req.body.eventName)));
 });
 app.post("/api/take-control", async (_req, res) => {
+  browserEpoch++;
   await connection.stop();
   // Revoke navigation immediately if a Return-to-Agent operation is in flight.
   await writeJson(runtimePath, { ...await readJson(runtimePath), ownership: "USER" });
@@ -149,15 +157,17 @@ app.post("/api/take-control", async (_req, res) => {
   await updateState({ status: "LOGIN_REQUIRED", currentAction: "Human owns the assigned Steel browser" });
   res.json({ ownership: "USER" });
 });
-async function returnAgent() {
+async function returnAgent(cancelled = () => false) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
   returningControl = true;
+  const epoch = browserEpoch, revoked = () => cancelled() || epoch !== browserEpoch;
+  let assigned;
   try {
     await waitForIdle();
-    const runtime = await readJson(runtimePath);
+    const runtime = assigned = await readJson(runtimePath);
     const name = eventName(runtime.expectedEventName);
     if (!runtime.apiEvent?.id || runtime.apiEvent.name !== name) throw new Error("Find the named event through the Cvent API first");
-    await writeJson(runtimePath, { ...runtime, ownership: "RETURNING" });
+    transitionBrowser(runtimePath, runtime, ["USER", "AGENT"], { ownership: "RETURNING" }, revoked);
     let observed = await observe();
     const plan = eventLocationPlan(runtime, observed);
     const target = { name, evtstub: plan.id, apiEventId: plan.id, url: plan.destination };
@@ -166,7 +176,7 @@ async function returnAgent() {
     const latest = await readJson(runtimePath);
     if (latest.ownership !== "RETURNING" || latest.expectedEventName !== name || latest.apiEvent?.id !== plan.id || latest.steelSessionId !== runtime.steelSessionId || latest.activeTargetId !== runtime.activeTargetId) throw new Error("Browser or requested event changed during verification");
     if (observed.info.url !== plan.destination) {
-      await writeJson(runtimePath, { ...latest, ownership: "LOCATING", expectedEvtstub: plan.id });
+      transitionBrowser(runtimePath, latest, ["RETURNING"], { ownership: "LOCATING", expectedEvtstub: plan.id }, revoked);
       await updateState({ status: "LOCATING", currentAction: "Ego is opening the selected event; authoring is blocked" });
       observed = await observe(eventLocationProgram(plan));
     }
@@ -174,12 +184,14 @@ async function returnAgent() {
     if (actual.evtstub !== plan.id) throw new Error("API/browser event identities differ; stopped without switching events");
     const confirmed = await readJson(runtimePath);
     if (!["RETURNING", "LOCATING"].includes(confirmed.ownership) || confirmed.apiEvent?.id !== plan.id || confirmed.expectedEventName !== name || confirmed.steelSessionId !== runtime.steelSessionId || confirmed.activeTargetId !== runtime.activeTargetId) throw new Error("Browser or target changed during event location");
-    await writeJson(runtimePath, { ...confirmed, ownership: "AGENT", expectedEvtstub: actual.evtstub, targetEventUrl: actual.url, resolvedEventName: name });
+    transitionBrowser(runtimePath, confirmed, ["RETURNING", "LOCATING"], { ownership: "AGENT", expectedEvtstub: actual.evtstub, targetEventUrl: actual.url, resolvedEventName: name }, revoked);
     await verifyLogin({ ...target, url: actual.url });
-    await updateState({ status: "READY", currentAction: "Ego opened and verified the selected event; ready for Execute RR" });
+    if (revoked()) throw new Error("Browser handoff cancelled");
+    await updateState({ status: "READY", currentAction: "Selected event verified; live job handoff controls AI start" });
     return { ownership: "AGENT", authenticated: true, target: { ...target, url: actual.url } };
   } catch (error) {
-    await writeJson(runtimePath, { ...await readJson(runtimePath), ownership: "USER" });
+    // A delayed handoff failure may only revoke its own browser, never another.
+    try { transitionBrowser(runtimePath, assigned, ["USER", "AGENT", "RETURNING", "LOCATING"], { ownership: "USER" }); } catch {}
     await updateState({ status: "LOGIN_REQUIRED", currentAction: error.message });
     throw error;
   } finally { returningControl = false; }
@@ -192,7 +204,8 @@ async function securityIncidents(runtime) {
   }
   return incidents;
 }
-async function prepareTarget(name, { returnControl = false, sessionInvalidated = false, expectedBrowser, beforeBrowser = async () => {} } = {}) {
+async function prepareTarget(name, { returnControl = false, sessionInvalidated = false, expectedBrowser, cancelled = () => false, beforeBrowser = async () => {} } = {}) {
+  if (cancelled()) throw new Error("Browser handoff cancelled");
   let runtime = await readJson(runtimePath);
   if (expectedBrowser && (runtime.runtimeId !== expectedBrowser.runtimeId || runtime.steelSessionId !== expectedBrowser.steelSessionId || runtime.activeTargetId !== expectedBrowser.activeTargetId)) throw new Error("Assigned clean browser changed; no AI started");
   const incidents = await securityIncidents(runtime);
@@ -208,7 +221,8 @@ async function prepareTarget(name, { returnControl = false, sessionInvalidated =
   runtime = await readJson(runtimePath);
   await beforeBrowser({ name, evtstub: runtime.apiEvent.id, apiEventId: runtime.apiEvent.id, url: `https://app.cvent.com/Subscribers/Events2/Details/EventDetails/Index?evtstub=${runtime.apiEvent.id}` });
   if (runtime.ownership !== "AGENT" && !returnControl) throw new Error("Browser control is with you, not necessarily logged out. If already signed in, click I've signed in to return control and verify the named event. Sign in only if Cvent actually requests it; no session was reset.");
-  await returnAgent();
+  await returnAgent(cancelled);
+  if (cancelled()) throw new Error("Browser handoff cancelled");
   const target = await resolveTarget(name);
   runtime = await verifyLogin(target);
   return { target, runtime };
@@ -220,7 +234,9 @@ app.post("/api/return-agent", async (req, res) => {
   res.json({ ownership: "AGENT", authenticated: true, target });
 });
 app.get("/viewer", async (_req, res) => {
-  const origin = steelOrigin((await readJson(runtimePath)).steelApiOrigin || "http://127.0.0.1:3400");
+  const runtime = await readJson(runtimePath);
+  if (await browserStopped(runtime)) return res.type("html").send('<!doctype html><html><body style="background:#111827;color:#e5e7eb;font:16px system-ui;padding:32px"><h2>Browser stopped</h2><p>This run ended. Its browser has been shut down to free memory. Saved evidence and profiles are preserved.</p><p>Start a fresh RR build when you are ready.</p></body></html>');
+  const origin = steelOrigin(runtime.steelApiOrigin || "http://127.0.0.1:3400");
   let html = await fetch(`${origin}/v1/sessions/debug?showControls=true&interactive=true`, { signal: AbortSignal.timeout(10000) }).then(r => r.text());
   html = html.replace("const baseWsUrl = 'ws://0.0.0.0:3000/v1/sessions/cast';", "const baseWsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/steel-cast';");
   res.type("html").send(html);
@@ -231,7 +247,8 @@ const server = app.listen(port, "127.0.0.1", () => console.log(`RR Pi RPC connec
 server.on("error", error => { console.error(error.message); process.exit(1); });
 server.on("upgrade", (req, socket, head) => {
   if (!isLocalRequest(req) || !req.url.startsWith("/steel-cast")) return socket.destroy();
-  void readJson(runtimePath).then(runtime => {
+  void readJson(runtimePath).then(async runtime => {
+    if (await browserStopped(runtime)) return socket.destroy();
     req.url = req.url.replace(/^\/steel-cast/, "/v1/sessions/cast");
     viewerProxy.ws(req, socket, head, { target: steelOrigin(runtime.steelApiOrigin || "http://127.0.0.1:3400") });
   }).catch(() => socket.destroy());

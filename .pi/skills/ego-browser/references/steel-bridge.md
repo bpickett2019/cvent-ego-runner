@@ -28,20 +28,27 @@ or select another browser or profile to resolve a missing host capability.
 - Keep the assigned result Page on successful completion:
   `await task.finish({keep:[page.label]})`. Do not finish on errors or user control.
   Tab/session deletion and creation are blocked, including raw CDP equivalents.
+  After native settlement or Stop, the app (not the agent) terminates the job's
+  Steel container. Keeping the result Page does not keep the environment running;
+  profiles and evidence are retained on disk. Never restart a settled container.
 - Snapshot scopes support the top document: viewport (default), full_page and
   AX subtrees. Snapshot output explicitly excludes iframe contents; an iframe
   subtree is unsupported. Use a screenshot for visual inspection. Do not assume
   missing snapshot text means an iframe has no content. Frame authoring is not
   acceptance-tested; stop if this prevents reliable verification.
+- Recover ordinary selector/navigation failures using the skill and fresh evidence.
+  There is no fixed selector-retry quota. Unconfirmed page execution/possible late
+  effects require global Stop and uncertainty review: do not automatically reload,
+  close or replace the assigned page. Three recognized renderer/CDP/unresponsive
+  failures within ten minutes trigger runner Stop; selector errors do not count.
 - Desktop-only profile/clipboard integrations and remote-browser download
   artifact transfer are not implemented here. Use keyboard.insertText for plain
   text rather than native desktop paste. Stop and report unsupported operations.
 - The skill's general fetch/CDP examples do not authorize custom API authoring,
   direct connections, prohibited actions, unassigned targets or bypassing guards.
   Supported Cvent operations use the existing `$CVENT_API_BIN` adapter first;
-  only documented API-unsupported work uses Ego. API failures are never permission
-  for browser fallback. Follow `app/runner-prompt.md`: approved event, draft-only,
-  no deletion, no credentials, no attendee access or communications.
+  only documented API-unsupported work uses Ego. The job's approved SOW governs
+  authorization; SDK capabilities do not expand it.
 
 The patch is also saved as `ego-bridge/patches/steel-session-ledger.patch` so
 it survives a fresh submodule checkout. From the project root, on an unpatched

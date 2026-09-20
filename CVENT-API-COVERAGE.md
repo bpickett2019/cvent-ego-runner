@@ -4,15 +4,32 @@ Validated 2026-09-19 against **(C+D) Medtrade Testing Clone 2**. This is a capab
 
 ## Current production policy and acceptance status
 
-The audit below predates the create-only preservation policy. Historical reversible writes are evidence, not permission to replay updates. The production CLI now rejects legacy event/registration/custom-field updates before network access. `configureDiscount` reuses existing codes unchanged (reporting differences separately from satisfied requirements) and allows only confirmed-missing complete creation. API-side mock tests do not certify live creation or Ego object preservation. The complete SOW checklist and remaining browser/API/deployment gates are tracked in [E2E-ACCEPTANCE.md](E2E-ACCEPTANCE.md).
+The audit below predates the create-only preservation policy. Historical reversible writes are evidence, not permission to replay updates. The production CLI now rejects legacy event/registration/custom-field updates before network access. `configureDiscount` / `configureVolumeDiscount` reuse exact supplied-value matches only; differences return `creation-required`, not satisfaction. The adapter creates absent identities with complete values. Exact volume names may differ from otherwise equivalent rules. Same-identity variant creation is an adapter authoring gap: use Ego only where Cvent permits a separate RR-compliant object without overwriting or changing the RR's identifiers. API-side mock tests do not certify live creation or Ego object preservation. The complete SOW checklist and remaining browser/API/deployment gates are tracked in [E2E-ACCEPTANCE.md](E2E-ACCEPTANCE.md).
 
 ## Current API-write routing correction
 
 Stopped run `88758a4b-46bf-4bf8-a80a-b422ddbf0b22` at user request: $5.682544, no stop failures or unreconciled spending. Its route plan identified item-association integration as a blocker for discount work; the former adapter supported only final-total creation. API reads alone were not full write coverage.
 
-`configureDiscount` now supports complete **new item-scoped code creation**: scoped admission/quantity lookup, inactive creation, new-code-only association PUTs, finalizing PUT, complete saved readback, durable uncertainty throughout, and no replay. Existing codes and their links remain immutable. `listQuantityItems` and `listDonationItems` are now exposed. The prompt requires distinct read/write routes and eligible API writes before unrelated browser work, while allowing documented read dependencies. Volume discount creation remains unintegrated; arbitrary eligibility semantics remain unsupported. Do not label these API gaps browser-only or claim all requirements are now writable.
+`configureDiscount` now supports complete **new item-scoped code creation**: scoped admission/quantity lookup, inactive creation, new-code-only association PUTs, finalizing PUT, complete saved readback, durable uncertainty throughout, and no replay. Existing codes and their links remain immutable. `listQuantityItems` and `listDonationItems` are now exposed. The current concise prompt gives an API-read/API-write/browser capability map; Pi chooses work order without a mandatory route-plan schema or forced write sequencing. `configureVolumeDiscount` now supports new named volume rules, all four public threshold types, and initial admission/quantity associations using the same guarded lifecycle. Question-choice and feature-status reads are integrated. Arbitrary eligibility semantics remain unsupported. Do not label these API gaps browser-only or claim all requirements are now writable.
 
-**138 offline tests pass** in `logs/api-item-writes-full-tests.log`. No live Cvent mutation or paid acceptance build was performed. See [CVENT-API.md](CVENT-API.md) for the exact contract. The historical audit below is evidence, not current permission to edit existing objects.
+The initial item-code milestone passed **138 offline tests** (`logs/api-item-writes-full-tests.log`); the current expansion passes **188** (`logs/api-expansion-full-tests.log`). No live Cvent mutation or paid acceptance build was performed. See [CVENT-API.md](CVENT-API.md) for the exact contract. The historical audit below is evidence, not current permission to edit existing objects.
+
+## Create-only write audit — current expansion
+
+Reviewed the official public OpenAPI's RR-relevant operation paths and discount schemas, not merely installed helper availability:
+
+| Operation family | Create-only SOW decision |
+|---|---|
+| Discount POST (`DISCOUNT_CODE`, `VOLUME_DISCOUNT`) | Integrated for absent identities; exact matches reused, differences require separate creation (same-identity variant gap documented) |
+| Discount PUT / agenda-item link PUT | Only initial configuration of the ID newly created and read back in the same CLI invocation; no standalone grant |
+| Event / registration-type / custom-field-answer updates | Existing configuration changes; production-blocked |
+| Account custom-field definition/choice writes | Account-global; excluded, not event-question authoring |
+| Feature settings / launch | Existing settings or publishing; excluded |
+| Attendee quantity items / vouchers / registrations | Attendee actions, not catalog authoring; excluded |
+| Event create/copy, sessions/speakers, communications, financial-account setup | Outside approved target/SOW; excluded |
+| Admission/optional catalogs, fee definitions, paths, event questions/choices, voucher definitions, site pages/widgets, general registration rules | No corresponding in-scope create route found in the reviewed public spec; retain documented browser coverage, not arbitrary HTTP discovery |
+
+This adds the remaining clearly identified permitted write family, **not a claim that every RR requirement is API-writable or that private/newer APIs do not exist**. Volume-rule exact-name/type/account collisions, incomplete catalogs, lost ownership, missing RR evidence and uncertain partial writes fail closed in the adapter. Equivalent rules under a different exact RR name no longer prohibit separate creation. New read operations are `listQuestionChoices` (complete event membership first) and `listEventFeatures` (status only). Exact schemas/limits: [CVENT-API.md](CVENT-API.md). No live request, paid prompt or Cvent mutation was used for this expansion; live volume financial behavior and full RR acceptance remain unproven.
 
 ## Integration audit history
 
@@ -72,7 +89,7 @@ An existing **inactive, unused event-level discount code** with an existing inte
 | Registration types | Connected update supports capacity, open-for-registration and automatic opening/closing dates. Capacity write/restore proven. Name/code/description/virtual are read-only in the update schema. | Event-local presentation, assignments and other unsupported setup. Do not create or edit account-global type definitions; escalate those requirements. |
 | Admission items | Readable; no catalog creation/update routes found. | Create/edit items, labels/descriptions, availability and path/type associations. |
 | Fees and pricing | Fee items readable; no fee-configuration authoring routes found. | Fee amounts, date-based pricing, member/nonmember tiers and their associations. These are distinct from API-supported discounts. |
-| Discounts | Public create/update and item-association endpoints exist. Existing-discount note PUT is live-proven. **Discount codes are connected** through `configureDiscount`, including initial admission/quantity associations on a newly created code. Volume writes are not integrated; existing-code updates remain policy-blocked. | Do not classify supported discount work as browser-only. Use the connected code adapter; report the remaining integration gaps. |
+| Discounts | Public create/update and item-association endpoints exist. Existing-discount note PUT is live-proven. **Discount codes are connected** through `configureDiscount`, including initial admission/quantity associations on a newly created code. New named volume rules and initial associations are connected through `configureVolumeDiscount`; all existing-discount updates remain policy-blocked. | Do not classify supported discount work as browser-only. Use the connected code/volume adapters; report unsupported eligibility rather than bypassing policy. |
 | Registration paths | Readable; no path authoring routes found. | Path flow, pages, selection/visibility, redirects, privacy/acceptance and path-level settings. |
 | Questions and choices | Both readable; no event-question/choice authoring routes found. | Create/edit text, choices, order, requiredness, display and conditional logic. |
 | Optional quantity/donation items | Catalogs readable; no corresponding catalog authoring routes found. | Item creation/editing, pricing, availability, placement and selection rules. |
@@ -89,9 +106,9 @@ An existing **inactive, unused event-level discount code** with an existing inte
 
 The runtime adapter exposes the operations documented in [CVENT-API.md](CVENT-API.md). The subsequent discount integration reused existing transport/identity/receipt mechanisms and the installed client's field allowlist/polling pattern, without SDK migration.
 
-- Discount, association, quantity-item and donation-item catalog reads are connected. Question-choice and feature-state reads still need integration where the workbook requires them; standalone audit access is not runner integration.
+- Discount, association, quantity-item and donation-item catalog reads are connected. Question-choice and feature-state reads are now connected; question-only choice URLs require complete approved-event membership proof first.
 - Discount-code matching/deduplication, baseline preservation, durable intent/acknowledgment, bounded readback polling, uncertainty handling and job-local verified identities are connected. The unconditional-create helper is deliberately not called.
-- Discount creation and new-code initial association mutations have offline coverage but still need explicitly authorized live acceptance if required. Volume creation remains an integration gap; existing volume/code updates are prohibited. Avoid disposable objects that cannot be removed within the approved policy.
+- Discount creation and new-code initial association mutations have offline coverage but still need explicitly authorized live acceptance if required. Volume creation and initial item links now have offline adapter/production-CLI coverage; existing volume/code updates remain prohibited. Avoid disposable objects that cannot be removed within the approved policy.
 - Feature changes are documented API capabilities, not live-proven writes or permission to launch.
 - Browser work needs its own saved-result verification and end-to-end validation. Successful API reads alone do not prove complete registration configuration.
 

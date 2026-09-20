@@ -1,9 +1,11 @@
 const $ = id => document.getElementById(id);
 let jobId = sessionStorage.getItem("rrJobId");
-let job = null, submitting = false, handoffPending = false;
-let browserOwnership = null, takingControl = false, viewerRuntimeId = null, loginFirstAvailable = false;
+let job = null, submitting = false, handoffPending = false, stopping = false;
+let browserOwnership = null, takingControl = false, viewerRuntimeId = null, viewerStopped = false, loginFirstAvailable = false;
 let workbook = null, draftLoading = false, edits = new Map(), previewEpoch = 0, jobs = [];
 const active = () => job && ["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(job.status);
+// Present historical terminal labels without rewriting immutable job records.
+const statusLabel = status => ({ REVIEW_REQUIRED: "INCOMPLETE", FINISHED: "INCOMPLETE", STOPPED_REQUIRES_REVIEW: "STOPPED" }[status] || status);
 const money = value => Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
 const list = value => Array.isArray(value) ? value : value ? [value] : [];
 const node = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
@@ -18,7 +20,7 @@ async function api(path, body) {
   return data;
 }
 function editorControls() {
-  const locked = submitting || draftLoading || !!active();
+  const locked = submitting || stopping || draftLoading || !!active();
   $("sheetSelect").disabled = locked || !workbook || !!edits.size;
   $("previousRows").disabled = locked || !workbook || !workbook.offset || !!edits.size;
   $("nextRows").disabled = locked || !workbook || workbook.offset + workbook.rows.length >= workbook.sheets[workbook.sheet].rows || !!edits.size;
@@ -29,16 +31,18 @@ function editorControls() {
 function renderControls() {
   const setup = job?.status === "RUNNING" && job?.phase === "AWAITING_INPUT" && job?.waitingFor === "setup";
   const userControl = browserOwnership === "USER";
-  $("take").disabled = submitting || takingControl || !browserOwnership || (userControl && !setup);
+  $("take").disabled = submitting || stopping || takingControl || !browserOwnership || (userControl && !setup);
   $("take").textContent = handoffPending ? "RETURNING TO AGENT…" : takingControl ? "TAKING CONTROL…" : userControl ? "RETURN TO AGENT" : "TAKE CONTROL";
   $("take").title = userControl
     ? setup ? "Return control after verifying login and this run's named event." : "Start a new build before returning control; stopped runs cannot be resumed."
     : "Stop the active build and return browser control to you.";
-  const locked = submitting || draftLoading || !!active();
+  const locked = submitting || stopping || draftLoading || !!active();
   $("upload").disabled = locked || !!edits.size || !loginFirstAvailable;
-  $("rr").disabled = locked;
+  $("rr").disabled = submitting || stopping || draftLoading || takingControl;
+  $("newRR").disabled = submitting || stopping || draftLoading || takingControl;
   $("eventName").disabled = locked;
-  $("stop").disabled = submitting || !active();
+  // Stop must remain available while Start/Return is awaiting the server.
+  $("stop").disabled = stopping || !active();
   const waiting = job?.status === "RUNNING" && job?.phase === "AWAITING_INPUT";
   $("questionPanel").hidden = !waiting;
   $("sendAnswer").hidden = job?.waitingFor === "setup";
@@ -52,10 +56,15 @@ function renderControls() {
   editorControls();
 }
 function renderWorkbook() {
-  if (!workbook) return;
+  if (!workbook) {
+    $("sheetSelect").replaceChildren(); $("sheetTable").replaceChildren();
+    $("workbookName").textContent = "No RR selected"; $("rrSelection").textContent = "No RR selected · choose an .xlsx"; $("sheetRange").textContent = "";
+    editorControls(); return;
+  }
   $("sheetSelect").replaceChildren(...workbook.sheets.map((sheet, index) => Object.assign(node("option", `${sheet.name} (${sheet.rows} × ${sheet.columns})`), { value: String(index) })));
   $("sheetSelect").value = String(workbook.sheet);
   $("workbookName").textContent = `${workbook.originalName} · ${workbook.revision ? `DRAFT v${workbook.revision}` : "ORIGINAL PRESERVED"}`;
+  $("rrSelection").textContent = `Saved: ${workbook.originalName} · ${workbook.revision ? `draft v${workbook.revision}` : "original preserved"}`;
   $("sheetRange").textContent = `${workbook.sheets[workbook.sheet].name} · rows ${workbook.offset + 1}–${workbook.offset + workbook.rows.length} of ${workbook.sheets[workbook.sheet].rows} · ${workbook.sheets[workbook.sheet].columns} columns${workbook.sheets[workbook.sheet].columns > 64 ? " (showing first 64)" : ""}`;
   const head = document.createElement("thead"), header = document.createElement("tr");
   header.append(node("th", "#"), ...workbook.columns.map(column => node("th", column))); head.append(header);
@@ -88,21 +97,22 @@ async function loadSheet(sheet = 0, offset = 0) {
 }
 async function refresh() {
   try {
-    const requestedId = jobId;
+    const requestedId = jobId, epoch = previewEpoch;
     const [runtime, current, progress] = await Promise.all([
       api("/api/runtime"), requestedId ? api(`/api/jobs/${requestedId}`) : Promise.resolve(null),
       requestedId ? api(`/api/jobs/${requestedId}/results/state.json`).catch(() => ({})) : Promise.resolve({}),
     ]);
-    if (requestedId !== jobId) return;
+    if (requestedId !== jobId || epoch !== previewEpoch) return;
     job = current;
     loginFirstAvailable = runtime.loginFirst === true;
     $("loginHint").textContent = loginFirstAvailable ? "Each Start Build creates a clean browser. Sign in, then Return to Agent. AI stays off until verification succeeds." : "Login-first upgrade is pending server activation. Existing runs are preserved; new builds are temporarily unavailable.";
-    $("owner").textContent = runtime.ownership === "USER" ? "LIVE — USER CONTROL" : "LIVE — AGENT CONTROL";
-    if (viewerRuntimeId && runtime.runtimeId && viewerRuntimeId !== runtime.runtimeId) $("browserFrame").querySelector("iframe").src = "/viewer";
+    $("owner").textContent = runtime.ownership === "USER" ? "USER CONTROL" : runtime.ownership === "AGENT" ? "AGENT CONTROL" : "CONTROL HANDOFF / UNCONFIRMED";
+    if ((viewerRuntimeId && runtime.runtimeId && viewerRuntimeId !== runtime.runtimeId) || viewerStopped !== !!runtime.browserStopped) $("browserFrame").querySelector("iframe").src = "/viewer";
     viewerRuntimeId = runtime.runtimeId || viewerRuntimeId;
+    viewerStopped = !!runtime.browserStopped;
     browserOwnership = runtime.ownership;
-    $("browserFrame").classList.toggle("user-control", runtime.ownership === "USER" && !handoffPending && !takingControl);
-    $("browserStatus").textContent = runtime.ownership === "USER" ? "USER CONTROL" : runtime.ownership;
+    $("browserFrame").classList.toggle("user-control", runtime.ownership === "USER" && !handoffPending && !takingControl && !stopping);
+    $("browserStatus").textContent = viewerStopped ? "BROWSER STOPPED" : runtime.ownership === "USER" ? "USER CONTROL" : runtime.ownership;
     const verified = !!job?.apiPreflight && job?.target?.apiEventId === job.apiPreflight.eventId;
     const target = active() ? job.requestedEventName || job.authorizedEventName : $("eventName").value.trim() || job?.requestedEventName;
     $("eventTitle").textContent = target || "Name your target Cvent event";
@@ -110,22 +120,26 @@ async function refresh() {
     $("bindingNote").textContent = active() ? `Bound to this run: ${target}. Stop and upload again to change it.` : "Target is locked to this upload when you start. A different RR name never changes it.";
     $("loginStatus").textContent = verified && runtime.ownership === "AGENT" ? "USER 1 · Event login verified" : "USER 1 · Human login / verification";
     $("plan").textContent = job ? `${job.createdAt || ""}  Uploaded RR workbook: ${job.originalName}` : "No RR uploaded.";
-    $("status").textContent = active() ? (job.workflow === "login-first" && !job.aiStartedAt ? "AI NOT STARTED · $0 this run" : job.phase === "AWAITING_INPUT" ? "WAITING FOR YOU" : "Running") : job?.status || "Not running";
-    $("stage").textContent = active() ? progress.currentStage || job.phase : job?.status || "UPLOAD";
-    $("action").textContent = job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
-    $("agentReply").textContent = job?.lastAssistantText || job?.intake?.summary || "";
+    $("status").textContent = active() ? (job.workflow === "login-first" && !job.aiStartedAt ? "AI NOT STARTED · $0 this run" : job.phase === "AWAITING_INPUT" ? "WAITING FOR YOU" : "Running") : statusLabel(job?.status) || "Not running";
+    const executing = active() && job.phase === "EXECUTING";
+    const ended = job && ["STOPPED", "DONE", "INCOMPLETE"].includes(statusLabel(job.status));
+    $("stage").textContent = executing ? "Executing RR" : active() ? progress.currentStage || job.phase : statusLabel(job?.status) || "UPLOAD";
+    $("action").textContent = ended ? `${job.stopReason || "Execution ended"}. ${job.status === "FINISHED" || job.status === "REVIEW_REQUIRED" ? "This historical run has no verified full-RR completion result." : job.executionSummary || "Saved execution results are available below."}`
+      : executing ? job.executionActivity ? `${job.executionActivity.at} · ${job.executionActivity.message}` : "Native Pi is working; saved results require separate verification."
+      : job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
+    $("agentReply").textContent = executing ? "" : job?.lastAssistantText || job?.intake?.summary || "";
     $("question").textContent = job?.lastAssistantText || "";
-    $("cost").textContent = job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending` : "No paid run started";
+    $("cost").textContent = job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending` : "No current run · prior spending retained";
     $("results").hidden = !job; if (job) $("results").href = `/api/jobs/${job.id}/results/final-report.md`;
     const entries = Array.isArray(jobs) ? [...jobs] : [];
     if (job && !entries.some(item => item.id === job.id)) entries.unshift(job);
-    $("jobSelect").replaceChildren(Object.assign(node("option", workbook?.originalName || "Select a saved run"), { value: "" }), ...entries.map(item => Object.assign(node("option", `${item.originalName} · ${item.status}`), { value: item.id })));
+    $("jobSelect").replaceChildren(Object.assign(node("option", workbook?.originalName || "Select a saved run"), { value: "" }), ...entries.map(item => Object.assign(node("option", `${item.originalName} · ${statusLabel(item.status)}`), { value: item.id })));
     $("jobSelect").value = jobId || ""; $("jobSelect").disabled = !!active() || submitting;
     renderList("completed", progress.completed); renderList("pending", progress.pending);
-    renderList("activity", list(progress.activity).slice(-10).reverse());
+    renderList("activity", Array.isArray(job?.activity) ? job.activity.slice(-100).reverse().map(entry => `${entry.at} · ${entry.message}`) : list(progress.activity).slice(-10).reverse());
     const count = list(progress.completed).length;
-    $("completionTitle").textContent = count ? "Verified progress recorded" : "No completed work yet";
-    $("completionCount").textContent = `${count} sections completed in this run`;
+    $("completionTitle").textContent = count ? "Agent-reported progress" : "No completed work reported";
+    $("completionCount").textContent = `${count} reported checkpoints · not independent acceptance`;
     $("progressLists").hidden = !count && !list(progress.pending).length;
     const elapsed = job?.startedAt ? Math.max(0, Math.floor(((active() ? Date.now() : Date.parse(job.finishedAt || job.updatedAt || job.startedAt)) - Date.parse(job.startedAt)) / 1000)) : 0;
     $("elapsed").textContent = [Math.floor(elapsed / 3600), Math.floor(elapsed / 60) % 60, elapsed % 60].map(value => String(value).padStart(2, "0")).join(":");
@@ -146,23 +160,47 @@ $("jobSelect").onchange = async () => {
 };
 $("eventName").value = sessionStorage.getItem("rrTargetName") || "";
 $("eventName").oninput = () => { sessionStorage.setItem("rrTargetName", $("eventName").value); $("eventTitle").textContent = $("eventName").value.trim() || "Name your target Cvent event"; };
-$("rr").onchange = async () => {
-  if (active() || submitting) return;
-  const file = $("rr").files?.[0], epoch = ++previewEpoch;
-  workbook = null; edits.clear(); renderControls();
-  if (!file) return;
-  draftLoading = true; renderControls();
+async function newRR(file = null) {
+  if (submitting || stopping || draftLoading || takingControl) return;
+  if (file && !/\.xlsx$/i.test(file.name)) { $("rr").value = ""; return message("Choose an .xlsx workbook", true); }
+  if ((active() || (jobId && !job) || edits.size) && !confirm("Stop the current run and start a fresh RR context? Unsaved cell edits will be discarded. Saved work, files and cumulative spending stay preserved. Stop cannot undo submitted Cvent changes.")) {
+    $("rr").value = ""; return;
+  }
+  submitting = true; ++previewEpoch; renderControls();
   try {
-    const form = new FormData(); form.append("rr", file);
-    const result = await api("/api/workbooks", form);
-    if (epoch !== previewEpoch) return;
-    workbook = result; jobId = null; job = null;
-    sessionStorage.removeItem("rrJobId"); sessionStorage.setItem("rrWorkbookId", workbook.id);
-    renderWorkbook(); await refresh();
-    message("RR preserved and ready. Enter your exact target event, then START BUILD. No paid run has started.");
-  } catch (error) { message(error.message, true); }
-  finally { draftLoading = false; renderControls(); }
-};
+    message("Ending the current context safely; no new AI session is being started…");
+    const result = await api("/api/new-rr", { jobId });
+    if (!result.cleared) throw new Error("New RR was not confirmed; keep the current run for review");
+    // Stopping is irreversible, but replacing the UI's workbook is not committed
+    // until its upload/preview succeeds. Keep the old selection and edits on error.
+    if (file) {
+      message("Saving and previewing the new RR; your entered target is retained…");
+      const form = new FormData(); form.append("rr", file);
+      const replacement = await api("/api/workbooks", form);
+      sessionStorage.setItem("rrWorkbookId", replacement.id);
+      workbook = replacement;
+      sessionStorage.setItem("rrTargetName", $("eventName").value);
+    } else {
+      workbook = null;
+      sessionStorage.removeItem("rrWorkbookId"); sessionStorage.removeItem("rrTargetName");
+      $("rr").value = ""; $("eventName").value = "";
+    }
+    jobId = null; job = null; edits.clear(); sessionStorage.removeItem("rrJobId");
+    $("answer").value = ""; $("sessionInvalidated").checked = false;
+    $("browserControlMessage").textContent = "Prior context ended. Saved work and spending remain. Start a new build before returning control; browser login was not reset.";
+    renderWorkbook();
+    // A history refresh failure must not turn a confirmed save into an upload error.
+    try { jobs = await api("/api/jobs"); } catch {}
+    message(file ? "RR saved and selected. Your target was kept. Review the workbook, then START BUILD. AI is off; prior spending still counts."
+      : "Fresh RR form ready. Choose an Excel file. AI is off; saved history and cumulative spending are retained.");
+  } catch (error) {
+    $("rr").value = "";
+    message(`${error.message}${file ? " · New RR was not selected. Your prior workbook, edits and target are retained. Any completed Stop remains in effect." : ""}`, true);
+  }
+  finally { submitting = false; await refresh(); }
+}
+$("newRR").onclick = () => newRR();
+$("rr").onchange = () => { const file = $("rr").files?.[0]; if (file) return newRR(file); };
 $("upload").onclick = async () => {
   if (submitting || draftLoading || active() || edits.size || !loginFirstAvailable) return;
   const file = $("rr").files?.[0];
@@ -171,7 +209,7 @@ $("upload").onclick = async () => {
   if (!targetName) return message("Enter the exact Cvent target event name; it is never taken from the RR", true);
   submitting = true; renderControls();
   try {
-    message("Binding your named target and preparing a fresh Pi session…");
+    message("Binding your named target and preparing a clean browser; AI has not started…");
     const form = new FormData();
     if (workbook) {
       const response = await fetch(`/api/workbooks/${workbook.id}/download`);
@@ -228,11 +266,14 @@ async function answer(login) {
 $("sendAnswer").onclick = () => answer(false);
 $("loginDone").onclick = () => answer(true);
 $("stop").onclick = async () => {
-  if (submitting || !active()) return;
-  submitting = true; renderControls();
-  try { await api(`/api/jobs/${jobId}/stop`, {}); message("Stopped. Saved work and spending are preserved. A new run needs a new upload."); }
+  if (stopping || !active()) return;
+  stopping = true; renderControls();
+  try {
+    const result = await api(`/api/jobs/${jobId}/stop`, {});
+    message(result.stopFailures?.length || result.spendingUnreconciled ? "Stop requires operator reconciliation. Do not start another run." : "Stopped. Saved work and spending are preserved. A new run needs a new upload.", !!result.stopFailures?.length || !!result.spendingUnreconciled);
+  }
   catch (error) { message(error.message, true); }
-  finally { submitting = false; await refresh(); }
+  finally { stopping = false; await refresh(); }
 };
 function focusBrowser() {
   $("browserDetails").scrollIntoView({ behavior: "smooth" });
@@ -273,11 +314,19 @@ $("saveWorkbook").onclick = async () => {
   finally { draftLoading = false; renderControls(); }
 };
 async function initialize() {
+  const epoch = previewEpoch;
   await refresh();
+  if (epoch !== previewEpoch) return;
   try {
-    const history = await api("/api/jobs"); jobs = Array.isArray(history) ? history : [];
+    const history = await api("/api/jobs");
+    if (epoch !== previewEpoch) return;
+    jobs = Array.isArray(history) ? history : [];
     const savedId = sessionStorage.getItem("rrWorkbookId");
-    if (/^[0-9a-f-]{36}$/.test(savedId || "")) { workbook = await api(`/api/workbooks/${savedId}`); renderWorkbook(); }
+    if (/^[0-9a-f-]{36}$/.test(savedId || "")) {
+      const saved = await api(`/api/workbooks/${savedId}`);
+      if (epoch !== previewEpoch) return;
+      workbook = saved; renderWorkbook();
+    }
     await refresh();
   } catch (error) { message(error.message, true); }
 }

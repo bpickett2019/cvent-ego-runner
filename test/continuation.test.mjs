@@ -32,7 +32,7 @@ async function fixture(t) {
   const upload = async (bytes = 'workbook') => { const form = new FormData(); form.append('rr', new Blob([bytes]), 'RR.xlsx'); form.append('eventName', 'Selected Event'); return request('/api/jobs', form); };
   const job = (await upload()).body;
   const approval = {authorizedEventName:'Selected Event'};
-  const settle = async id => { launches.at(-1).emit('event', {type:'agent_settled'}); for(let i=0;i<100;i++){ if ((await request(`/api/jobs/${id}`)).body.status === 'REVIEW_REQUIRED') return; await new Promise(r=>setTimeout(r,5)); } throw new Error('did not settle'); };
+  const settle = async id => { launches.at(-1).emit('event', {type:'agent_settled'}); for(let i=0;i<100;i++){ if ((await request(`/api/jobs/${id}`)).body.status === 'INCOMPLETE') return; await new Promise(r=>setTimeout(r,5)); } throw new Error('did not settle'); };
   return {job, approval, launches, request, upload, settle, connection, beforeVerify:fn=>{beforeVerify=fn;}, nextId:id=>{nextId=id;}};
 }
 const prompts = rpc => rpc.commands.filter(c => c.type === 'prompt');
@@ -79,7 +79,7 @@ test('settlement closes Pi; fresh same-event upload keeps spending and evidence,
   assert.equal(current.totalEventCostUSD,2.5); assert.equal(current.allowanceUSD,60);
   assert.notEqual(current.sessionId,f.job.sessionId);
   assert.ok(!f.launches[1].commands.some(c=>c.type==='switch_session'));
-  assert.match(prompts(f.launches[1])[0].message,/Do not load prior Pi transcripts or workbooks/);
+  assert.match(prompts(f.launches[1])[0].message,/or load prior transcripts or workbooks/);
   assert.equal(await readFile(join(f.job.workspace,'job.json'),'utf8'),before);
   const history=JSON.parse(await readFile(join(second.workspace,'receipts/prior-event-evidence.json'),'utf8'));
   assert.equal(history.evidence[0].jobId,f.job.id);

@@ -28,7 +28,7 @@ function nativeFake(handler) {
   const rpc = new PiRpc({ cwd: "/tmp", workspace: "/tmp/job", env: { PI_PROVIDER: "working", PI_MODEL: "model" }, spawnProcess: (_bin, args, options) => {
     assert.ok(args.includes("rpc")); assert.ok(args.includes("model"));
     assert.ok(args.includes("--no-context-files"), "runtime must not inherit development checkpoints");
-    assert.equal(args[args.indexOf("--append-system-prompt") + 1], "/tmp/app/runtime-policy.md");
+    assert.ok(!args.includes("--append-system-prompt"), "no overlapping application system policy");
     assert.ok(!args.includes("--system-prompt"), "retain native tools/system prompt");
     assert.ok(args.includes("--no-skills"));
     assert.equal(args[args.indexOf("--skill") + 1], "/tmp/.pi/skills/ego-browser/SKILL.md");
@@ -202,10 +202,12 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal(fake.commands[0].type, "new_session");
   const prompt = fake.commands.find(c => c.type === 'prompt');
   assert.match(prompt.message, /original.xlsx/);
-  assert.match(prompt.message, /FIRST TASK: read and understand this job's uploaded RR locally/);
+  assert.match(prompt.message, /Read this job's original.xlsx/);
+  assert.doesNotMatch(prompt.message, /allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   const initialState = JSON.parse(await readFile(join(first.workspace, 'state.json'), 'utf8'));
   assert.equal(initialState.currentStage, 'Read RR first');
-  assert.ok(prompt.message.includes(JSON.stringify(RUN_POLICY.approvedSow)));
+  assert.ok(prompt.message.startsWith(RUN_POLICY.approvedSow));
+  assert.equal(prompt.message.split(RUN_POLICY.approvedSow).length, 2, "SOW occurs once");
   const running = await (await request(`/api/jobs/${first.id}`)).json();
   assert.equal(running.executionPolicy, "api-first-ego-fallback");
   assert.ok(prompt.message.includes('"executionPolicy":"api-first-ego-fallback"'));
@@ -235,7 +237,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   const stopped = await (await request(`/api/jobs/${first.id}`)).json();
   assert.equal(stopped.piCostUSD, 3.5);
   assert.deepEqual(stopped.unresolvedChanges, ["uncertain"]);
-  assert.equal(stopped.status, "STOPPED_REQUIRES_REVIEW");
+  assert.equal(stopped.status, "STOPPED");
   assert.equal((await request(`/api/jobs/${first.id}/start`, approval)).status, 409);
   assert.equal((await request(`/api/jobs/${first.id}/results/progress.jsonl`)).status, 409, 'historical native traces are never downloadable');
   assert.equal((await request(`/api/jobs/${second.id}/start`, approval)).status, 409, "new context cannot hide prior uncertain writes to the same event");
@@ -256,7 +258,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   fake.emit("event", { type: "agent_settled" });
   for (let i = 0; i < 30; i++) {
     const result = await (await request(`/api/jobs/${second.id}`)).json();
-    if (result.status === "REVIEW_REQUIRED") break;
+    if (result.status === "INCOMPLETE") break;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   assert.equal((await request(`/api/jobs/${second.id}/results/result.json`)).status, 200);
@@ -269,10 +271,10 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   let budgetResult;
   for (let i = 0; i < 60; i++) {
     budgetResult = await (await request(`/api/jobs/${budgetJob.id}`)).json();
-    if (budgetResult.status === "STOPPED_REQUIRES_REVIEW") break;
+    if (budgetResult.status === "STOPPED") break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(budgetResult.status, "STOPPED_REQUIRES_REVIEW");
+  assert.equal(budgetResult.status, "STOPPED");
   assert.match(budgetResult.stopReason, /under-\$60 goal/);
   assert.equal(budgetResult.piCostUSD, 50);
   assert.ok(fake.commands.some(command => command.type === "clear_queue"));

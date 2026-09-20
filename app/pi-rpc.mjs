@@ -11,10 +11,10 @@ export class PiRpc extends EventEmitter {
     this.closed = false;
     // Load the exact skill exercised against this bridge, not a same-name global
     // skill with a different API. Keep native tools and extensions unchanged.
-    // Fresh conversation != fresh instructions: exclude development AGENTS/CLAUDE
-    // files and explicitly supply the production policy using native CLI options.
+    // Exclude development policies; the single job prompt carries the approved SOW.
+    // Keep Pi's built-in system prompt, tools and compaction unmodified.
     const args = ["--mode", "rpc", "--approve", "--session-dir", `${workspace}/pi-sessions`, "--thinking", "low",
-      "--no-context-files", "--append-system-prompt", join(cwd, "app/runtime-policy.md"),
+      "--no-context-files",
       "--no-skills", "--skill", join(cwd, ".pi/skills/ego-browser/SKILL.md")];
     if (!env.PI_PROVIDER || !env.PI_MODEL) throw new Error("Launch from the working Pi environment (PI_PROVIDER and PI_MODEL required)");
     args.push("--provider", env.PI_PROVIDER, "--model", env.PI_MODEL);

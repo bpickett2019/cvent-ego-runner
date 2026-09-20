@@ -52,7 +52,7 @@ globalThis.fetch=async(input,init={})=>{
  if(u.pathname===base+'/${discountId}'){
   assert.equal(m,'PUT');assert.equal(original.active,false);assert.equal(links.length,1);
   await appendFile(dir+'/writes.log','FINALIZE\\n');
-  const body=JSON.parse(init.body),saved={...original,...body,capacity:{...body.capacity,used:0}};
+  const body=JSON.parse(init.body),saved={...original,...body,...(body.type==='VOLUME_DISCOUNT'?{}:{capacity:{...body.capacity,used:0}})};
   if(!process.env.TEST_FINAL_STALE)await writeFile(dir+'/remote.json',JSON.stringify(saved));
   return json(saved);
  }
@@ -61,7 +61,7 @@ globalThis.fetch=async(input,init={})=>{
   assert.equal(original,null,'never create over an existing code');
   await appendFile(dir+'/writes.log','POST\\n');
   const body=JSON.parse(init.body);
-  const saved={...body,id:'${discountId}',level:'EVENT',capacity:{...body.capacity,used:0}};
+  const saved={...body,id:'${discountId}',level:'EVENT',...(body.type==='VOLUME_DISCOUNT'?{}:{capacity:{...body.capacity,used:0}})};
   if(!process.env.TEST_STALE)await writeFile(dir+'/remote.json',JSON.stringify(saved));
   return new Response(JSON.stringify(saved),{status:201});
  }
@@ -85,6 +85,8 @@ test("CLI advertises create-only production writes and explains prohibited updat
   assert.equal(result.code, 0, result.stderr);
   const capabilities = JSON.parse(result.stdout);
   assert.equal(capabilities.operations.configureDiscount, "api-write");
+  assert.equal(capabilities.operations.configureVolumeDiscount, "api-write");
+  assert.equal(capabilities.writeCapabilities.configureVolumeDiscount.mode, "create-only");
   assert.equal(capabilities.operations.listDiscounts, "api-read");
   assert.equal(capabilities.operations.listQuantityItems, "api-read");
   assert.match(capabilities.writeCapabilities.configureDiscount.supports.join(' '), /item-scoped/);
@@ -110,9 +112,10 @@ test("CLI preserves an existing code and reports differences without pretending 
   const result = await f.run("configureDiscount", { ...request, data: { ...request.data, createIfMissing: true } });
   assert.equal(result.code, 0, result.stderr);
   const output = JSON.parse(result.stdout), receipt = (await f.receipts())[0];
-  assert.equal(output.action, "preserved"); assert.equal(output.requirementsSatisfied, false);
+  assert.equal(output.action, "creation-required");
+  assert.match(output.limitation, /unsupported authoring capability/); assert.equal(output.requirementsSatisfied, false);
   assert.deepEqual(output.differences, ["note"]);
-  assert.equal(receipt.status, "PRESERVED_DIFFERENCE"); assert.deepEqual(receipt.result.saved, row);
+  assert.equal(receipt.status, "CREATION_REQUIRED"); assert.deepEqual(receipt.result.saved, row);
   assert.equal(receipt.prepared, undefined); assert.equal(receipt.writeEvidence, undefined);
   assert.deepEqual(JSON.parse(await readFile(join(f.dir, "remote.json"))), row);
   assert.equal(existsSync(join(f.dir, "writes.log")), false);
@@ -177,6 +180,39 @@ test("production item-discount failures retain the entire uncertain creation and
     assert.equal((await f.run('configureDiscount', itemRequest())).code, 1);
     assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), before);
     assert.equal(existsSync(join(f.dir, 'api-operation.lock')), false);
+  }
+});
+const volumeRequest = (linked = false) => ({ rrReferences: ['Discounts!B4'], data: { name: 'Group rate', createIfMissing: true, patch: { active: true, stackable: false, method: { type: 'BY_PERCENTAGE', value: 10 }, thresholdType: 'AFTER_THRESHOLD_LIMIT', thresholdLimit: 5, interval: 1, includePrimaryRegistrant: false }, ...(linked ? { agendaItems: itemRequest().data.agendaItems } : {}) } });
+test('production volume CLI records durable identity and verifies new-only finalization', async t => {
+  for (const linked of [false, true]) {
+    const f = await setup(t), request = volumeRequest(linked), result = await f.run('configureVolumeDiscount', request);
+    assert.equal(result.code, 0, result.stderr); const receipt = (await f.receipts())[0];
+    assert.equal(receipt.status, 'PASS'); assert.equal(receipt.prepared.body.type, 'VOLUME_DISCOUNT');
+    assert.equal(receipt.prepared.body.active, !linked); assert.equal(receipt.result.saved.active, true);
+    assert.equal(receipt.writeEvidence.at(-1).matched, true);
+    assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'api-volume-discounts.json'))), { eventId, discounts: { 'Group rate': discountId } });
+    assert.equal(existsSync(join(f.dir, 'api-discounts.json')), false); assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), false);
+    const writes = await readFile(join(f.dir, 'writes.log'), 'utf8'); assert.equal(writes, linked ? 'POST\nLINK\nFINALIZE\n' : 'POST\n');
+    const repeat = await f.run('configureVolumeDiscount', request); assert.equal(repeat.code, 0, repeat.stderr); assert.equal(JSON.parse(repeat.stdout).action, 'unchanged');
+    const changed = structuredClone(request); changed.data.patch.thresholdLimit = 8;
+    const preserve = await f.run('configureVolumeDiscount', changed); assert.equal(preserve.code, 0, preserve.stderr); assert.equal(JSON.parse(preserve.stdout).requirementsSatisfied, false);
+    assert.equal((await f.run('configureVolumeDiscount', request, { TEST_HIDE: '1' })).code, 1);
+    assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), writes);
+  }
+});
+test('volume CLI blocks absent evidence/takeover and retains uncertainty across all partial failures', async t => {
+  for (const flags of [{ TEST_STALE: '1' }, { TEST_LINK_DENIED: '1' }, { TEST_LINK_STALE: '1' }, { TEST_FINAL_STALE: '1' }, { TEST_LINK_TAKEOVER: '1' }, { TEST_FOREIGN_INTENT: '1' }]) {
+    const f = await setup(t), request = volumeRequest(true), result = await f.run('configureVolumeDiscount', request, flags);
+    assert.equal(result.code, 1); assert.equal((await f.receipts())[0].status, 'UNCERTAIN');
+    assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), true); assert.equal(existsSync(join(f.dir, 'api-volume-discounts.json')), false);
+    const before = await readFile(join(f.dir, 'writes.log'), 'utf8'); assert.equal(before.split('POST').length, 2);
+    for (const op of ['configureVolumeDiscount', 'configureDiscount']) assert.equal((await f.run(op, request)).code, 1);
+    assert.equal((await f.run('listDiscounts', {})).code, flags.TEST_LINK_TAKEOVER ? 1 : 0); assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), before);
+  }
+  for (const takeover of [false, true]) {
+    const f = await setup(t), request = volumeRequest(); if (!takeover) delete request.rrReferences;
+    const result = await f.run('configureVolumeDiscount', request, takeover ? { TEST_TAKEOVER: '1' } : {});
+    assert.equal(result.code, 1); assert.equal(existsSync(join(f.dir, 'writes.log')), false); assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), false);
   }
 });
 test("multi-step creation cannot overwrite another command's uncertainty marker", async t => {

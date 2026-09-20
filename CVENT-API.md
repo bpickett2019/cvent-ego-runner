@@ -6,11 +6,15 @@ This is a native Pi tool connection, not another agent. The installed Cvent clie
 
 The runner keeps the same Pi model, workbook tools and assigned Steel/Ego bridge. API credentials use Cvent OAuth client credentials (`CVENT_CLIENT_ID`, `CVENT_CLIENT_SECRET`, `CVENT_API_BASE_URL`), not a browser password. `CVENT_CREDENTIALS_FILE` names the existing local `.env` containing those fields. Only those fields are loaded; never print the file, keys, Basic header or bearer tokens. The server and tool read them locally. No keys are sent to the dashboard, job prompt, or receipts.
 
-## Production RR preservation policy — current
+## Production RR exact-match / separate-creation policy — current
 
 The production CLI is **read/reuse/create-only**. Its `capabilities` output separates allowed `operations` from `blockedOperations`. All legacy `updateEvent`, `updateEventBasics`, `updateRegistrationType` and `updateEventCustomFieldAnswers` requests are rejected before network access: no event rename, event-setting update or existing-item edit. The underlying adapter retains legacy helpers for separate integrations and historical regression tests; that is not an RR authorization or a browser-fallback reason.
 
-`configureDiscount` preserves every existing code, including ones created earlier in the same job. Matching requested values yield `action: unchanged, requirementsSatisfied: true`; differing requested fields yield `action: preserved, requirementsSatisfied: false`, field names in `differences`, and receipt status `PRESERVED_DIFFERENCE`. The `verified` flag means the saved identity/state was read, not that all RR values were satisfied. Only a confirmed-missing code with explicit complete creation data may POST. For item-scoped creation, the same command may link explicitly resolved admission/quantity items and finalize that newly created discount, after proving its identity from this command's POST and saved readback. This is bounded initial configuration of a new object, not a standalone update/link grant for existing codes. The production before-dispatch guard rejects all other mutations before durable write intent. These are production tool guards, not a shell sandbox or proof of object-level Ego enforcement. See [E2E-ACCEPTANCE.md](E2E-ACCEPTANCE.md) for the remaining SOW gates.
+Reuse only exact RR matches. Any RR-specified difference requires a separate RR-compliant object, leaving the original unchanged. Similar purpose or approximate spelling is not satisfaction. `configureDiscount` and `configureVolumeDiscount` never edit existing objects: matching supplied values yield `action: unchanged, requirementsSatisfied: true`; differing supplied fields yield `action: creation-required, requirementsSatisfied: false`, `differences`, an adapter `limitation`, and receipt status `CREATION_REQUIRED`. Comparisons cover the supplied fields, not complete workbook interpretation; supply/check all RR-required values and relationships. The `verified` flag means the saved identity/state was read, not full RR completion.
+
+This adapter supports POST only when its requested identity is absent. Volume names now match exactly (case and internal whitespace included); an equivalent rule with another name does not block creation. Discount codes retain conservative case-insensitive collision detection, but different literal spelling is reported as a difference, never satisfaction. **Same-identity variant creation is an unsupported authoring capability in this adapter.** Ego may create a separate object for this gap only when Cvent permits it without altering RR names/codes or modifying originals. A singleton setting or enforced unique-key collision is a concrete blocker, not permission to invent a suffix, overwrite, bypass a rejection or stop independent work.
+
+For item-scoped creation, the same command may link explicitly resolved admission/quantity items and finalize that newly created discount, after proving its identity from this command's POST and saved readback. This is bounded initial configuration of a new object, not a standalone update/link grant for existing codes. The production before-dispatch guard rejects all other mutations before durable write intent. These are production tool guards, not a shell sandbox or proof of object-level Ego enforcement. See [E2E-ACCEPTANCE.md](E2E-ACCEPTANCE.md) for the remaining SOW gates.
 
 The historical write audits below predate this preservation policy and must not be replayed.
 
@@ -40,7 +44,7 @@ Write inputs arrive on stdin, with source evidence references and an operation-s
 JSON
 ```
 
-This is a syntax example, **not authorization to overwrite an existing code**. It will reuse a found code unchanged and report differences; a missing code blocks without explicit complete creation data. Only execute values explicitly required by this job's workbook and approved SOW.
+This is a syntax example, **not authorization to overwrite an existing code**. It will leave a found code untouched and report whether new creation is required; a missing code blocks without explicit complete creation data. Only execute values explicitly required by this job's workbook and approved SOW.
 
 Supported adapter operations:
 
@@ -49,7 +53,9 @@ Supported adapter operations:
 | `getEvent` | Read the approved event |
 | `listAdmissionItems` | Read event-scoped admission items |
 | `listRegistrationPaths` / `listRegistrationTypes` | Read event-scoped registration configuration |
-| `listQuestions` / `listSessions` | Read `/event-questions` or `/sessions` with the approved event filter |
+| `listQuestions` / `listSessions` | Read `/event-questions` or `/sessions` with the approved event filter; sessions remain outside the RR SOW |
+| `listQuestionChoices` | `{questionId}`: first prove membership in the complete approved-event question catalog, then paginate `/event-questions/{questionId}/choices`; scope `event/events:read` |
+| `listEventFeatures` | Read `/events/{id}/features`; scope `event/event-features:read`; no feature setting/launch writes |
 | `listFees` / `listVouchers` | Read `/events/{id}/fee-items` or `/events/{id}/vouchers` |
 | `listDiscounts` / `listDiscountedAgendaItems` | Fully paginated event-scoped discount catalog and discount/item links |
 | `listQuantityItems` / `listDonationItems` | Fully paginated event-scoped optional-item catalogs; these are not attendee quantity updates |
@@ -57,6 +63,7 @@ Supported adapter operations:
 | `updateRegistrationType` | **Blocked in production:** reuse the existing type unchanged |
 | `updateEventCustomFieldAnswers` | **Blocked in production:** preserve existing answers/integration identifiers |
 | `configureDiscount` | `{code, patch, discountId?, createIfMissing?, agendaItems?}`; reuse an existing code unchanged or create a confirmed-missing event-level code with complete explicit data; optional items are `{id, type: "AdmissionItem" | "QuantityItem"}`; see below |
+| `configureVolumeDiscount` | `{name, patch, discountId?, createIfMissing?, agendaItems?}`; same create-only lifecycle for named event volume rules; see volume contract below |
 
 The retained `(C+D)` guard is **not permission to rename an event or bypass the API through UI**. If that client refuses the target, report an integration/policy blocker. The failed live event PATCH route is disabled. An invalid preserved registration deadline/end-date combination blocks PUT before write intent; correcting scheduling requires separate explicit authorization. Client method availability is not a guarantee that every tenant exposes the same operations. A non-2xx response is not automatically an unsupported-capability determination.
 
@@ -99,7 +106,7 @@ The same existing API adapter used by Pi executed these tests. Pi remains the na
 
 ## Expanded API/browser coverage audit
 
-See [CVENT-API-COVERAGE.md](CVENT-API-COVERAGE.md) for the broader live audit, exact browser configuration backlog and remaining integration gaps. Discounts, discount-item associations, quantity/donation catalogs, features and all 77 eligible question-choice lists were read successfully. A separate inactive-discount note write/restore test passed, including full discount/association preservation checks. Discount-code configuration is exposed as `configureDiscount`, including initial item associations on a code newly created in the same command. Volume-discount writes remain an integration gap; modifying associations on an existing code remains prohibited.
+See [CVENT-API-COVERAGE.md](CVENT-API-COVERAGE.md) for the broader live audit, exact browser configuration backlog and remaining integration gaps. Discounts, discount-item associations, quantity/donation catalogs, features and all 77 eligible question-choice lists were read successfully. A separate inactive-discount note write/restore test passed, including full discount/association preservation checks. Discount-code configuration is exposed as `configureDiscount`, including initial item associations on a code newly created in the same command. `configureVolumeDiscount` now exposes new named volume rules and their initial item associations. Modifying any existing discount or association remains prohibited.
 
 That test confirmed delayed discount readback after HTTP 201. An immediately unchanged search result is not proof that an accepted write did nothing. Keep uncertainty until bounded read-only polling verifies saved state; never resend a mutation to overcome stale readback.
 
@@ -115,8 +122,8 @@ JSON
 
 This is syntax, not authorization or a real target ID. Use only values required by the workbook. The patch allowlist is `name`, `active`, `stackable`, `method`, `effectiveFrom`, `effectiveTo`, `note`, `audienceType`, `includeGuestsTowardsCapacity`, `autoApply`, `capacity`. Methods require both `type` (`BY_AMOUNT`, `BY_PERCENTAGE`, `FLAT_PRICE`) and numeric `value`; capacity accepts only `total`. Effective dates use `YYYY-MM-DD`; clearing dates is not supported. Read-only fields, code/type changes, changes to existing associations and unknown fields are rejected. Initial links for a new code must be supplied separately as `agendaItems`, not in the patch.
 
-- Existing records are never written. A matching request returns `action: unchanged, requirementsSatisfied: true`; a differing request returns `action: preserved, requirementsSatisfied: false` with differing field names. Both retain the authoritative saved state and identity. Even a code created earlier in this job is immutable on subsequent calls.
-- A missing code blocks unless `createIfMissing: true` is explicit and `discountId` is absent. Creation additionally requires a complete patch: name, active, stackable, full method, audienceType, includeGuestsTowardsCapacity, autoApply and capacity.total. No availability or financial values are inferred. Without `agendaItems`, creation is final-total (`applyToAllAgendaItems: false`); dates/note are optional. With `agendaItems`, this command performs initial item-scoped creation as described below. Volume discounts and standalone association writes are not exposed.
+- Existing records are never written. A matching request returns `action: unchanged, requirementsSatisfied: true`; a differing request returns `action: creation-required, requirementsSatisfied: false` with differing field names and the same-identity adapter limitation. Both retain the authoritative saved state and identity. Even a code created earlier in this job is immutable on subsequent calls.
+- A missing code blocks unless `createIfMissing: true` is explicit and `discountId` is absent. Creation additionally requires a complete patch: name, active, stackable, full method, audienceType, includeGuestsTowardsCapacity, autoApply and capacity.total. No availability or financial values are inferred. Without `agendaItems`, creation is final-total (`applyToAllAgendaItems: false`); dates/note are optional. With `agendaItems`, this command performs initial item-scoped creation as described below. Volume rules use the separate `configureVolumeDiscount` contract; standalone association writes are not exposed.
 - Event identity/status and code matching are checked again before durable intent. There is no server-side ETag or atomic uniqueness guarantee: these checks reduce but cannot eliminate concurrent external edits or stale searches.
 - For confirmed-missing creation, exactly one POST is dispatched; existing codes dispatch no mutation. New item-scoped codes additionally use one PUT per confirmed-missing link and one finalizing PUT, never repeating a sent mutation. The original baseline, full outgoing body, acknowledgment ID/status and poll snapshots are retained in the receipt. HTTP 201 is acceptance, **not** verification.
 - Bounded read-only polling follows the installed client's increasing-delay pattern, extended to 60 seconds. It preserves uncertainty through stale reads and rejects unexpected changes. A final complete catalog scan checks code uniqueness and saved state. HTTP failures are not retried. Request/pagination time can extend elapsed time beyond the polling schedule; allow sufficient Bash time (e.g. 180 seconds), and reconcile any timeout instead of replaying.
@@ -128,25 +135,50 @@ Verification: offline mocked create/reuse/difference, update-denial, deduplicati
 
 `configureDiscount` now accepts `agendaItems: [{"id":"<approved item UUID>","type":"AdmissionItem"}]` (also `QuantityItem`). Supply this alongside the complete RR-backed patch and `createIfMissing: true`. This uses the reviewed official `PUT /events/{id}/discounts/{discountId}/agenda-items/{agendaItemId}` and discount PUT routes, not UI fallback.
 
-- Resolve all 1–100 distinct item UUIDs through complete event-scoped admission/quantity catalogs. Registration-type IDs, session/attendee IDs, guessed values, malformed/partial catalogs and foreign-event items are rejected. Donation reads are available, but donation linking is not exposed.
+- Resolve all 1–100 distinct item UUIDs through complete event-scoped admission/quantity catalogs. Registration-type IDs, session/attendee IDs, guessed values, malformed/partial catalogs and foreign-event items are rejected. Donation reads are available, but the reviewed discount association `EntityType1` enum does not include DonationItem, so donation linking is not exposed. Session/session-bundle associations remain outside this SOW; membership associations lack an approved event-bound catalog route in this adapter.
 - Create the absent code **inactive** and final-total temporarily. Verify its new identity, then link only the explicit scoped items while still inactive. Read back the complete link set after each PUT. Finally PUT the requested complete values with `applyToAllAgendaItems: true`, including the RR's desired active value, and independently verify the discount, exact links and unchanged item catalogs.
 - This is one initial configuration command, not a resumable series of arbitrary update calls. The CLI accepts follow-on PUTs only for the ID proven newly created by that command, checks ownership/target and its own uncertainty marker before each write, and retains all intent/acknowledgment/readback phases in one receipt. An existing code—including one created in an earlier call—is never edited or given new links.
-- Stop, HTTP failure, missing/stale readback or conflicting state retains uncertainty for the **whole creation**, including an inactive partial object. Do not replay, complete it with another command, delete it or switch to a browser. Reconciliation requires explicit review.
-- Missing eligibility semantics, ambiguous values and volume requirements are still blockers for their dependent rows. Item links do not implement arbitrary registration-type eligibility. Independent fully specified rows should still proceed through supported API writes.
+- Stop, HTTP failure, missing/stale readback or conflicting state retains uncertainty for the **whole creation**, including an inactive partial object. Do not replay, complete it with another command, delete it or switch to a browser. Reconcile uncertain saved state; never replay it.
+- Missing eligibility semantics and ambiguous values remain blockers for their dependent rows. Volume requirements use the supported contract below. Item links do not implement arbitrary registration-type eligibility. Independent fully specified rows should still proceed through supported API writes.
 - Validation: **138 offline tests pass**, `logs/api-item-writes-full-tests.log`, including production CLI POST/link/finalization, immutable existing codes, source evidence, complete scoped lookup, wrong scope/IDs, Stop/takeover, foreign uncertainty, delayed readback, no-replay and failure preservation. These tests use mocked HTTP, not live creation certification. No paid build or live Cvent mutation was used to implement this change.
+
+## Volume-discount configuration
+
+`configureVolumeDiscount` uses the public discount POST with `type: VOLUME_DISCOUNT`, plus bounded initial link/finalization PUTs only when `agendaItems` are supplied. It requires the same approved unpublished `(C+D)` target, RR source references, AGENT ownership, complete catalogs, durable intent and independent saved-state verification as codes. No additional credentials or direct HTTP authoring are needed.
+
+Input shape (placeholders describe syntax, not approved financial values):
+
+```text
+{rrReferences: ["<sheet!cell>"], data: {
+  name: "<exact RR rule name>", createIfMissing: true,
+  patch: {active: <boolean>, stackable: <boolean>,
+    method: {type: "BY_AMOUNT|BY_PERCENTAGE|FLAT_PRICE", value: <number>},
+    thresholdType: "ALL|AFTER_THRESHOLD_LIMIT|BEFORE_THRESHOLD_LIMIT|EVERY_NTH_REGISTRANT",
+    thresholdLimit: <positive integer>, interval: <1–10>, includePrimaryRegistrant: <boolean>},
+  agendaItems: [{id: "<verified item UUID>", type: "AdmissionItem|QuantityItem"}]
+}}
+```
+
+- Omit `agendaItems` only for a rule requiring no item associations; saved associations must then be empty. Otherwise supply 1–100 explicit admission/quantity items. Create inactive, verify, link, then finalize the desired active value; volume bodies never include code-only `applyToAllAgendaItems`, capacity or audience flags.
+- All shown patch fields are explicit. `interval` is meaningful only for `EVERY_NTH_REGISTRANT`; otherwise use the API's neutral value `1`. `includePrimaryRegistrant` is meaningful only for `BEFORE_THRESHOLD_LIMIT`; otherwise it must be `false`. Meaningful values must come from the RR, not guesses. Optional `effectiveFrom`/`effectiveTo` are valid `YYYY-MM-DD` dates; optional `note` is at most 300 characters. Names are nonblank, at most 50 characters. Method values must be nonnegative; percentages cannot exceed 100.
+- Public semantics: `ALL` discounts all registrations once the ordered-item threshold is exceeded; `AFTER_THRESHOLD_LIMIT` discounts those beyond it; `BEFORE_THRESHOLD_LIMIT` discounts through the threshold, subject to primary-registrant inclusion; `EVERY_NTH_REGISTRANT` discounts every interval counting from the threshold. Do not infer these from a vague "group discount" label. Arbitrary registration-type eligibility is not implemented.
+- Match by **exact name**, not normalized spelling or rule equivalence. A different name permits separate creation with complete RR-backed values, even if another rule has identical terms. Duplicate IDs/exact names, missing names and account/type collisions still block this adapter's writes; same-identity variant creation needs a supported Ego creation workflow. Never invent another name to evade a platform constraint.
+- Existing rules and links are immutable, even earlier same-job creations. Differing requested fields or associations return `creation-required`, not satisfied. Retain verified IDs in private `api-volume-discounts.json`; supply observed `discountId` when available. No standalone update/link tool is exposed.
+- Failures keep the shared uncertainty marker for the whole partial creation, blocking both code and volume writes. Never replay, clean up or complete a partial object through another call/browser. No atomic server-side uniqueness/ETag guarantee exists; stale catalogs or concurrent external edits remain residual risk.
+- New volume creation and associations are **offline-tested, not live-certified**. Existing historical note write/restoration does not establish volume financial behavior or completed RR acceptance.
 
 ## Requirement routing
 
-After reading the workbook and before changes, Pi maintains a concise, living `route-plan.json`, one entry per RR requirement. This is agent working memory, not a prescribed execution order, fixed click sequence or per-step approval gate:
+After reading the workbook, Pi keeps concise source-referenced coverage notes. A living `route-plan.json` is optional working memory, not a required schema, prescribed execution order or per-step approval gate. Useful fields include:
 - workbook source reference and desired state;
 - separate readOperation and writeOperation, plus API support/coverage evidence;
-- disposition: satisfied, preserved-difference, api-ready, dependent, integration-gap or browser-gap;
+- disposition: exact-match, creation-required, created, dependent, integration-gap or browser-gap;
 - if UI is necessary, the documented unsupported capability;
 - saved-result verification route.
 
-API-first includes **writes**, not merely collecting read snapshots. Execute eligible independent API creations and verify them before unrelated browser inspection/authoring; a necessary documented read gap can justify scoped UI inspection first. Do not invent writes when existing items must be preserved. Prefer API readback to verify UI work too. Site Designer theme/layout/pages/widgets are browser-only in the installed client's coverage documentation. For those and other documented gaps, load the installed Ego skill and use **only** `$EGO_BROWSER_BIN nodejs` in the assigned Steel browser.
+API-first includes **writes**, not merely collecting read snapshots. Use supported APIs for eligible creations and saved-state verification; choose work order from actual dependencies rather than a fixed API/browser sequence. Do not stop at an inventory: execute separate RR-compliant creation for differing objects through supported routes. Preserve originals and reuse exact matches. Prefer API readback to verify UI work too. Site Designer theme/layout/pages/widgets are browser-only in the installed client's coverage documentation. For those and other documented gaps, load the installed Ego skill and use **only** `$EGO_BROWSER_BIN nodejs` in the assigned Steel browser.
 
-**This adapter is not the entire Cvent API.** Missing helper methods do not prove API absence. Discount-code configuration now uses a deduplicated adapter, not the installed client's unconditional-create workflow. Volume-discount endpoints still need integration; do not label them “browser-only.” New-code item associations are now integrated; existing-code association updates remain blocked by preservation policy. Report blocked work rather than rebuilding an SDK or agent during an RR.
+**This adapter is not the entire Cvent API.** Missing helper methods do not prove API absence. Discount-code configuration now uses a deduplicated adapter, not the installed client's unconditional-create workflow. Volume creation and new-code/new-volume initial item associations are integrated; existing-discount and standalone association updates remain blocked by preservation policy. Report blocked work rather than rebuilding an SDK or agent during an RR.
 
 Never use UI to bypass missing credentials, 401/403, wrong identity, policy denial, rate limits, server failures, timeouts, or uncertain API writes. Unsupported API coverage and failed API execution are different states.
 
@@ -158,4 +190,4 @@ One API operation runs at a time per job using `api-operation.lock`. A lock left
 
 Native Pi launches the CLI through its existing Bash tool. Stop uses queue clearing, native cancellation and owned-process cleanup; a sent network request cannot be rolled back. Job ledgers retain any unresolved API receipt after Stop. Never clear uncertainty evidence merely to continue execution.
 
-The routing plan is an execution policy, not a new shell sandbox. Pi retains its original shell tools; Cvent credentials must remain appropriately scoped. Human review remains required for completed or interrupted results.
+The routing plan is an execution policy, not a new shell sandbox. Pi retains its original shell tools; Cvent credentials must remain appropriately scoped. There is no mandatory review phase. Native Pi executes and reports saved results and concrete blockers; DONE requires the native final report to confirm all scoped website, registration and dependencies saved and verified, still Draft, with no blockers or untested work. Otherwise settlement is INCOMPLETE, not a success inferred from session exit. See README.md for the small final-result shape; it is not an independent semantic audit. Stop, ownership, security and uncertain-write reconciliation remain enforced.

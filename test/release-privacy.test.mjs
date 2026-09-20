@@ -30,6 +30,8 @@ test('activity projection excludes all native payloads, reasoning and unknown ev
   }
   assert.deepEqual(publicEvent({ type: 'tool_execution_end', toolName: 'secret-extension-name', toolCallId: 'secret', result: 'secret', isError: true }), { type: 'tool_execution_end', tool: 'tool', outcome: 'error' });
   assert.deepEqual(publicEvent({ type: 'rr_question', kind: 'setup', message: 'secret' }), { type: 'rr_question', kind: 'setup' });
-  assert.deepEqual(publicEvent({ type: 'rr_stopped', failures: ['secret'] }), { type: 'rr_stopped', reviewRequired: true, cleanupFailed: true });
+  assert.deepEqual(publicEvent({ type: 'rr_stopped', failures: ['secret'] }), { type: 'rr_stopped', cleanupFailed: true });
+  for(const status of ['DONE','INCOMPLETE','STOPPED']) assert.deepEqual(publicEvent({ type: 'rr_result', status, text: 'secret' }), { type: 'rr_result', status });
+  assert.deepEqual(publicEvent({ type: 'rr_result', status: 'secret' }), { type: 'rr_result', status: 'INCOMPLETE' });
   assert.deepEqual(publicEvent({ type: 'turn_end', message: 'secret', toolResults: ['secret'] }), { type: 'turn_end' });
 });

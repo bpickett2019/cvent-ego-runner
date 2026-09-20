@@ -9,7 +9,8 @@ export const CAPABILITIES = Object.freeze({
   listRegistrationTypes: "api-read", listQuestions: "api-read", listSessions: "api-read",
   listFees: "api-read", listVouchers: "api-read", listDiscounts: "api-read", listDiscountedAgendaItems: "api-read",
   listQuantityItems: "api-read", listDonationItems: "api-read",
-  configureDiscount: "api-write",
+  listQuestionChoices: "api-read", listEventFeatures: "api-read",
+  configureDiscount: "api-write", configureVolumeDiscount: "api-write",
   updateEvent: "api-write", updateEventBasics: "api-write", updateRegistrationType: "api-write", updateEventCustomFieldAnswers: "api-write",
 });
 // Official Cvent OpenAPI routes. Keep collection reads here rather than using
@@ -26,9 +27,11 @@ const COLLECTIONS = Object.freeze({
   listDiscountedAgendaItems: { path: "/events/{id}/discounts/agenda-items" },
   listQuantityItems: { path: "/events/{id}/quantity-items" },
   listDonationItems: { path: "/events/{id}/donation-items" },
+  listEventFeatures: { path: "/events/{id}/features" },
+  listQuestionChoices: { path: "/event-questions/{questionId}/choices" },
 });
-function collectionScope(url, path, eventId, discountId = null) {
-  const route = Object.values(COLLECTIONS).find(route => route.path.replace("{id}", eventId) === path);
+function collectionScope(url, path, eventId, discountId = null, questionId = null) {
+  const route = Object.values(COLLECTIONS).find(route => route.path.replace("{id}", eventId).replace("{questionId}", questionId || "{questionId}") === path);
   if (!route) return false;
   const allowed = route.filtered || discountId ? ["limit", "token", "filter"] : ["limit", "token"];
   if ([...url.searchParams.keys()].some(key => !allowed.includes(key) || url.searchParams.getAll(key).length !== 1)) return false;
@@ -53,15 +56,21 @@ export async function loadCredentials(env = process.env) {
   if (url.protocol !== "https:" || !/^api-platform(?:-[a-z0-9]+)?\.cvent\.com$/i.test(url.hostname) || url.username || url.password || url.search || url.hash || !/^\/ea\/?$/.test(url.pathname)) throw new ApiFailure("Cvent API regional base URL is not an approved HTTPS endpoint");
   return { baseUrl: baseUrl.replace(/\/$/, ""), clientId, clientSecret };
 }
+export function clientPaths(env = process.env) {
+  const project = env.CVENT_AGENT_ROOT || join(homedir(), "cvent-agent");
+  const configuration = env.CVENT_UI_AUTOMATION_ROOT || join(homedir(), "cvent-ui-automation");
+  return { loader: join(project, "node_modules/tsx/dist/esm/api/index.mjs"),
+    defaultClient: join(project, "src/cvent/api.ts"), configurationClient: join(configuration, "src/cvent-api.ts") };
+}
 async function existingClient(credentials, fetcher, family = "default") {
   // Reuse the installed client, not its separate agent/runtime.
-  const project = join(homedir(), "cvent-agent");
-  const { tsImport } = await import(pathToFileURL(join(project, "node_modules/tsx/dist/esm/api/index.mjs")).href);
+  const paths = clientPaths();
+  const { tsImport } = await import(pathToFileURL(paths.loader).href);
   if (family === "configuration") {
-    const { CventApi } = await tsImport(join(homedir(), "cvent-ui-automation/src/cvent-api.ts"), import.meta.url);
+    const { CventApi } = await tsImport(paths.configurationClient, import.meta.url);
     return new CventApi({ ...credentials, fetch: fetcher });
   }
-  const { CventApi } = await tsImport(join(project, "src/cvent/api.ts"), import.meta.url);
+  const { CventApi } = await tsImport(paths.defaultClient, import.meta.url);
   return new CventApi(credentials, fetcher);
 }
 export function includesRequested(actual, expected) {
@@ -92,16 +101,18 @@ const DISCOUNT_FIELDS = ["name", "active", "stackable", "method", "effectiveFrom
 const DISCOUNT_PATCH_FIELDS = DISCOUNT_FIELDS.filter(key => !["type", "code", "applyToAllAgendaItems"].includes(key));
 const discountKey = code => code.trim().toUpperCase();
 const object = value => !!value && typeof value === "object" && !Array.isArray(value);
-function discountMatch(rows, code) {
+function discountMatch(rows, code, kind = "DISCOUNT_CODE") {
   const ids = new Set();
   for (const row of rows) {
     if (!UUID.test(row.id) || ids.has(row.id) || !["DISCOUNT_CODE", "VOLUME_DISCOUNT"].includes(row.type) || (row.type === "DISCOUNT_CODE" && (typeof row.code !== "string" || !row.code.trim()))) throw new ApiFailure("Discount catalog has invalid or duplicate identities; no write allowed");
     ids.add(row.id);
   }
-  const matches = rows.filter(row => typeof row.code === "string" && discountKey(row.code) === discountKey(code));
+  const volume = kind === "VOLUME_DISCOUNT";
+  if (volume && rows.some(row => typeof row.name !== "string" || !row.name.trim())) throw new ApiFailure("Discount catalog has missing names; cannot prove volume-discount absence");
+  const matches = rows.filter(row => volume ? row.name === code : typeof row.code === "string" && discountKey(row.code) === discountKey(code));
   if (matches.length > 1) throw new ApiFailure("Discount code is ambiguous; do not create or update duplicates");
   const row = matches[0];
-  if (row && (row.level !== "EVENT" || row.type !== "DISCOUNT_CODE")) throw new ApiFailure("Only event-level discount codes may be reused or created; no account/global or volume-discount writes");
+  if (row && (row.level !== "EVENT" || row.type !== kind)) throw new ApiFailure("Discount identity collides with a different type or account-level item; preserve it without creating a replacement");
   return row ?? null;
 }
 function validateDiscountBody(body) {
@@ -125,6 +136,21 @@ function prepareDiscount(input, before) {
   if (before && body.capacity.total !== -1 && body.capacity.total < before.capacity.used) throw new ApiFailure("Discount capacity is below its existing usage");
   const expected = before ? { ...structuredClone(before), ...structuredClone(patch), capacity: { ...before.capacity, ...body.capacity } } : body;
   return { body, expected };
+}
+const VOLUME_FIELDS = ["name", "type", "active", "stackable", "method", "effectiveFrom", "effectiveTo", "note", "thresholdType", "thresholdLimit", "interval", "includePrimaryRegistrant"];
+const VOLUME_PATCH_FIELDS = VOLUME_FIELDS.filter(key => !["name", "type"].includes(key));
+function prepareVolumeDiscount(input, before) {
+  if (before && Object.keys(before).some(key => ![...VOLUME_FIELDS, "id", "level", "event", "created", "createdBy", ...AUDIT_FIELDS].includes(key))) throw new ApiFailure("Volume discount baseline contains an unreviewed field; no lossy initial configuration");
+  const body = { ...(before ? Object.fromEntries(VOLUME_FIELDS.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) : { name: input.name, type: "VOLUME_DISCOUNT" }), ...structuredClone(input.patch) };
+  if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 50 || body.type !== "VOLUME_DISCOUNT") throw new ApiFailure("Volume discount name/type required");
+  if (["active", "stackable", "includePrimaryRegistrant"].some(key => typeof body[key] !== "boolean")) throw new ApiFailure("Volume discount flags must be explicit booleans");
+  if (!object(body.method) || Object.keys(body.method).some(key => !["type", "value"].includes(key)) || !["BY_AMOUNT", "BY_PERCENTAGE", "FLAT_PRICE"].includes(body.method.type) || !Number.isFinite(body.method.value) || body.method.value < 0 || (body.method.type === "BY_PERCENTAGE" && body.method.value > 100)) throw new ApiFailure("Invalid volume discount method/value");
+  if (!["ALL", "AFTER_THRESHOLD_LIMIT", "BEFORE_THRESHOLD_LIMIT", "EVERY_NTH_REGISTRANT"].includes(body.thresholdType) || !Number.isSafeInteger(body.thresholdLimit) || body.thresholdLimit < 1 || !Number.isInteger(body.interval) || body.interval < 1 || body.interval > 10) throw new ApiFailure("Explicit supported volume threshold and interval required");
+  if ((body.thresholdType !== "EVERY_NTH_REGISTRANT" && body.interval !== 1) || (body.thresholdType !== "BEFORE_THRESHOLD_LIMIT" && body.includePrimaryRegistrant !== false)) throw new ApiFailure("Volume interval/primary-registrant flags do not apply to this threshold type");
+  if (Object.hasOwn(body, "note") && (typeof body.note !== "string" || body.note.length > 300)) throw new ApiFailure("Invalid volume discount note");
+  for (const key of ["effectiveFrom", "effectiveTo"]) if (Object.hasOwn(body, key) && (typeof body[key] !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body[key]) || !Number.isFinite(Date.parse(body[key])) || new Date(body[key]).toISOString().slice(0, 10) !== body[key])) throw new ApiFailure("Volume effective dates must be valid ISO dates");
+  if (body.effectiveFrom && body.effectiveTo && body.effectiveFrom > body.effectiveTo) throw new ApiFailure("Volume effective dates are reversed");
+  return { body };
 }
 export class CventConnection {
   constructor({ credentials = () => loadCredentials(), fetcher = fetch, clientFactory = existingClient, intervalMs = 520, discountPollDelaysMs = [1000, 2000, 5000, 10000, 20000, 30000, 60000], sleeper = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
@@ -209,11 +235,17 @@ export class CventConnection {
     }
     throw new ApiFailure("Cvent event search exceeded its bounded page limit; no event selected");
   }
-  async readCollection(eventId, operation, discountId = null) {
-    if (!UUID.test(eventId) || !Object.hasOwn(COLLECTIONS, operation) || (discountId !== null && (operation !== "listDiscounts" || !UUID.test(discountId)))) throw new ApiFailure("Approved event and collection operation required");
+  async readCollection(eventId, operation, discountId = null, questionId = null) {
+    if (!UUID.test(eventId) || !Object.hasOwn(COLLECTIONS, operation) || (discountId !== null && (operation !== "listDiscounts" || !UUID.test(discountId))) || (operation === "listQuestionChoices" ? !UUID.test(questionId || "") : questionId !== null)) throw new ApiFailure("Approved event and collection operation required");
+    // Choices have a question-only URL: establish event membership from a complete
+    // scoped catalog before following that URL, never from an input event claim.
+    if (operation === "listQuestionChoices") {
+      const questions = await this.readCollection(eventId, "listQuestions");
+      if (questions.some(row => !UUID.test(row.id)) || new Set(questions.map(row => row.id)).size !== questions.length || questions.filter(row => row.id === questionId).length !== 1) throw new ApiFailure("Question identity is missing or ambiguous in the approved event");
+    }
     const { credentials, token } = await this.authenticate();
     const route = COLLECTIONS[operation];
-    const first = new URL(`${credentials.baseUrl}${route.path.replace("{id}", eventId)}`);
+    const first = new URL(`${credentials.baseUrl}${route.path.replace("{id}", eventId).replace("{questionId}", questionId)}`);
     first.searchParams.set("limit", "100");
     if (route.filtered) first.searchParams.set("filter", `event.id eq '${eventId}'`);
     if (discountId) first.searchParams.set("filter", `id in ('${discountId}')`);
@@ -222,13 +254,14 @@ export class CventConnection {
     const seen = new Set(), items = [];
     for (let count = 0; count < 200; count++) {
       const cursor = url.searchParams.get("token") ?? "";
-      if (url.origin !== first.origin || url.pathname !== first.pathname || url.username || url.password || url.hash || !collectionScope(url, path, eventId, discountId) || seen.has(cursor)) throw new ApiFailure("Unsafe or repeated Cvent collection pagination; no partial result returned");
+      if (url.origin !== first.origin || url.pathname !== first.pathname || url.username || url.password || url.hash || !collectionScope(url, path, eventId, discountId, questionId) || seen.has(cursor)) throw new ApiFailure("Unsafe or repeated Cvent collection pagination; no partial result returned");
       seen.add(cursor);
       const response = await this.transport(url, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } });
       let page;
       try { page = await response.json(); } catch { throw new ApiFailure("Cvent collection returned invalid JSON; no partial result returned"); }
       if (!Array.isArray(page?.data) || page.data.some(item => !item || typeof item !== "object" || Array.isArray(item))) throw new ApiFailure("Cvent collection response has invalid data; no partial result returned");
       if (page.data.some(item => item.event?.id != null && item.event.id !== eventId)) throw new ApiFailure("Cvent collection returned a different event identity; no partial result returned");
+      if (questionId && page.data.some(item => item.question?.id != null && item.question.id !== questionId)) throw new ApiFailure("Choice read returned a different question identity");
       if (discountId && page.data.some(item => item.id !== discountId)) throw new ApiFailure("Discount readback returned a different identity");
       items.push(...page.data);
       const href = page.paging?._links?.next?.href ?? page._links?.next?.href;
@@ -291,31 +324,45 @@ export class CventConnection {
     if (!["draft", "pending"].includes(String(event.status).trim().toLowerCase())) throw new ApiFailure("Cvent API target is not confirmed unpublished; execution blocked");
     return { event, client, receipt: { route: "api", eventId: event.id, name: target.name, status: event.status, verifiedAt: new Date().toISOString() } };
   }
-  async configureDiscount(target, event, input, beforeWrite, recordEvidence) {
+  async configureDiscount(target, event, input, beforeWrite, recordEvidence, kind = "DISCOUNT_CODE") {
     if (!event.title?.startsWith("(C+D)")) throw new ApiFailure("Discount writes require the existing (C+D) event guard; no browser bypass");
-    if (!object(input) || Object.keys(input).some(key => !["code", "discountId", "patch", "createIfMissing", "agendaItems"].includes(key)) || typeof input.code !== "string" || !input.code.trim() || input.code !== input.code.trim() || input.code.length > 30 || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !DISCOUNT_PATCH_FIELDS.includes(key))) throw new ApiFailure("Discount input requires an exact code and supported patch; existing-item changes are prohibited");
+    const volume = kind === "VOLUME_DISCOUNT", identityKey = volume ? "name" : "code";
+    const identity = input?.[identityKey], fields = volume ? VOLUME_PATCH_FIELDS : DISCOUNT_PATCH_FIELDS;
+    const match = rows => discountMatch(rows, identity, kind);
+    const prepare = volume ? prepareVolumeDiscount : prepareDiscount;
+    if (!object(input) || Object.keys(input).some(key => ![identityKey, "discountId", "patch", "createIfMissing", "agendaItems"].includes(key)) || typeof identity !== "string" || !identity.trim() || identity !== identity.trim() || identity.length > (volume ? 50 : 30) || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !fields.includes(key))) throw new ApiFailure("Discount input requires an exact identity and supported patch; existing-item changes are prohibited");
     if (input.agendaItems !== undefined && (!Array.isArray(input.agendaItems) || !input.agendaItems.length || input.agendaItems.length > 100 || input.agendaItems.some(item => !object(item) || Object.keys(item).some(key => !["id", "type"].includes(key)) || !UUID.test(item.id) || !["AdmissionItem", "QuantityItem"].includes(item.type)) || new Set(input.agendaItems.map(item => item.id)).size !== input.agendaItems.length)) throw new ApiFailure("agendaItems requires 1–100 unique, explicit AdmissionItem/QuantityItem UUIDs; sessions and other item types are outside scope");
     const rows = await this.readCollection(target.apiEventId, "listDiscounts");
-    const before = discountMatch(rows, input.code);
+    const before = match(rows);
     if (input.discountId && before?.id !== input.discountId) throw new ApiFailure("Discount ID/code does not match this event's catalog");
     if (!before && input.createIfMissing !== true) throw new ApiFailure("Discount code not found; creation requires explicit createIfMissing and complete configuration");
-    const { body } = prepareDiscount(input, before);
+    const { body } = prepare(input, before);
     // Existing codes are immutable under the RR preservation policy. A verified
     // existing identity is not necessarily a match for this workbook's values.
     if (before) {
       const differences = Object.keys(input.patch).filter(key => !includesRequested(before[key], input.patch[key]));
+      if (before[identityKey] !== identity) differences.push(identityKey);
       if (input.agendaItems) {
-        if (before.applyToAllAgendaItems !== true) differences.push("applyToAllAgendaItems");
+        if (!volume && before.applyToAllAgendaItems !== true) differences.push("applyToAllAgendaItems");
         const links = await this.discountLinks(target.apiEventId, before.id);
         if (!isDeepStrictEqual(links, this.itemKeys(input.agendaItems))) differences.push("agendaItems");
-      }
-      return { route: "api", action: differences.length ? "preserved" : "unchanged", verified: true, requirementsSatisfied: differences.length === 0, differences, eventId: target.apiEventId, discountId: before.id, saved: before };
+      } else if (volume && (await this.discountLinks(target.apiEventId, before.id)).length) differences.push("agendaItems");
+      return { route: "api", action: differences.length ? "creation-required" : "unchanged", verified: true, requirementsSatisfied: differences.length === 0, differences,
+        ...(differences.length ? { limitation: "This adapter cannot create a second object with this identity. The original is untouched. Same-identity variant creation is an unsupported authoring capability; use documented Ego creation only if Cvent supports it without altering RR values or existing objects." } : {}),
+        eventId: target.apiEventId, discountId: before.id, saved: before };
     }
-    if (input.agendaItems) return this.configureItemDiscount(target, event, input, { ...body, applyToAllAgendaItems: true }, beforeWrite, recordEvidence);
+    if (volume) {
+      // Exact RR names matter. An equivalent rule under a different name is
+      // not an exact match and does not prohibit a separate RR-compliant rule.
+      await this.discountLinks(target.apiEventId, "00000000-0000-0000-0000-000000000000");
+    }
+    if (input.agendaItems) return this.configureItemDiscount(target, event, input, volume ? body : { ...body, applyToAllAgendaItems: true }, beforeWrite, recordEvidence, kind);
     const { credentials, token } = await this.authenticate();
     const latestEvent = (await this.assertTarget(target)).event;
     if (!isDeepStrictEqual(event, latestEvent)) throw new ApiFailure("Event changed during discount preparation; no write attempted");
-    const latest = discountMatch(await this.readCollection(target.apiEventId, "listDiscounts"), input.code);
+    const latestRows = await this.readCollection(target.apiEventId, "listDiscounts");
+    const latest = match(latestRows);
+    if (volume && !isDeepStrictEqual(rows, latestRows)) throw new ApiFailure("Discount catalog changed during volume preparation; no write attempted");
     if (!isDeepStrictEqual(before, latest)) throw new ApiFailure("Discount changed during preparation; no write attempted");
     const method = "POST";
     const path = `/events/${target.apiEventId}/discounts`;
@@ -335,15 +382,16 @@ export class CventConnection {
       const found = await this.readCollection(target.apiEventId, "listDiscounts", discountId);
       if (found.length > 1) throw new ApiFailure("Discount readback has duplicate identities; reconciliation required");
       let saved = found[0];
-      if (saved && (saved.level !== "EVENT" || saved.type !== "DISCOUNT_CODE" || typeof saved.code !== "string" || discountKey(saved.code) !== discountKey(input.code))) throw new ApiFailure("Discount readback escaped the approved code/level; reconciliation required");
+      if (saved && (saved.level !== "EVENT" || saved.type !== kind || typeof saved[identityKey] !== "string" || (volume ? saved.name !== identity : discountKey(saved.code) !== discountKey(identity)))) throw new ApiFailure("Discount readback escaped the approved code/level; reconciliation required");
       const matches = row => !!row && includesRequested(row, body);
       let matched = matches(saved);
       if (matched) {
         // Full scoped scan also catches duplicate codes after creation/update.
-        const final = discountMatch(await this.readCollection(target.apiEventId, "listDiscounts"), input.code);
+        const final = match(await this.readCollection(target.apiEventId, "listDiscounts"));
         if (final && final.id !== discountId) throw new ApiFailure("Discount code resolved to another identity after write");
         matched = matches(final); if (matched) saved = final;
       }
+      if (matched && volume && (await this.discountLinks(target.apiEventId, discountId)).length) throw new ApiFailure("New volume discount has unexpected associations; retain uncertainty");
       const poll = { phase: "READBACK", discountId, elapsedMs: Date.now() - started, matched, saved: saved ?? null };
       polls.push(poll); await recordEvidence(poll);
       if (matched) {
@@ -374,7 +422,9 @@ export class CventConnection {
     if (new Set(keys).size !== keys.length) throw new ApiFailure("Discount association catalog has duplicate identities");
     return keys;
   }
-  async configureItemDiscount(target, event, input, desired, beforeWrite, recordEvidence) {
+  async configureItemDiscount(target, event, input, desired, beforeWrite, recordEvidence, kind = "DISCOUNT_CODE") {
+    const volume = kind === "VOLUME_DISCOUNT";
+    const match = rows => discountMatch(rows, volume ? input.name : input.code, kind);
     // Complete initial configuration of ONE new discount in this command. Never
     // expose a standalone link/update tool that can modify an existing discount.
     const items = input.agendaItems;
@@ -382,17 +432,17 @@ export class CventConnection {
     await this.discountLinks(target.apiEventId, "00000000-0000-0000-0000-000000000000"); // Validate the complete link collection before creating anything.
     const initial = { ...input, patch: { ...input.patch, active: false } };
     delete initial.agendaItems;
-    const created = await this.configureDiscount(target, event, initial, beforeWrite, recordEvidence);
+    const created = await this.configureDiscount(target, event, initial, beforeWrite, recordEvidence, kind);
     if (created.action !== "created") throw new ApiFailure("Discount appeared during preparation; preserve it rather than adding links");
     const discountId = created.discountId, base = `/events/${target.apiEventId}/discounts/${discountId}`;
     const baseline = created.saved;
     // Refuse a newly returned, unreviewed field before any link/finalizing PUT.
     // This is initial configuration, not permission for a lossy overwrite.
-    prepareDiscount(input, baseline);
+    (volume ? prepareVolumeDiscount : prepareDiscount)(input, baseline);
     const business = row => Object.fromEntries(Object.entries(row).filter(([key]) => !AUDIT_FIELDS.has(key)));
     const assertNewUnchanged = async () => {
       await this.assertTarget(target);
-      const current = discountMatch(await this.readCollection(target.apiEventId, "listDiscounts"), input.code);
+      const current = match(await this.readCollection(target.apiEventId, "listDiscounts"));
       if (!current || current.id !== discountId || !isDeepStrictEqual(business(current), business(baseline))) throw new ApiFailure("New discount changed before initial configuration completed; keep uncertainty");
       if (!isDeepStrictEqual(catalog, await this.discountItemsSnapshot(target.apiEventId, items))) throw new ApiFailure("Discount item catalog changed during preparation; keep uncertainty");
       return current;
@@ -431,11 +481,11 @@ export class CventConnection {
     const started = Date.now();
     for (const delay of this.discountPollDelaysMs) {
       const remaining = delay - (Date.now() - started); if (remaining > 0) await this.sleeper(remaining);
-      const saved = discountMatch(await this.readCollection(target.apiEventId, "listDiscounts"), input.code);
+      const saved = match(await this.readCollection(target.apiEventId, "listDiscounts"));
       if (saved && saved.id !== discountId) throw new ApiFailure("Finalized discount identity changed; keep uncertainty");
       const links = await this.discountLinks(target.apiEventId, discountId);
       if (!isDeepStrictEqual(links, expectedLinks)) throw new ApiFailure("Finalized discount links did not preserve the requested item set");
-      const expected = { ...baseline, ...desired, capacity: { ...baseline.capacity, ...desired.capacity } };
+      const expected = volume ? { ...baseline, ...desired } : { ...baseline, ...desired, capacity: { ...baseline.capacity, ...desired.capacity } };
       const matched = !!saved && isDeepStrictEqual(business(saved), business(expected));
       await recordEvidence({ phase: "FINAL_READBACK", discountId, matched, saved: saved ?? null, links });
       if (matched) {
@@ -453,10 +503,11 @@ export class CventConnection {
       const client = await this.client(target.apiEventId);
       const event = await client.getEvent(target.apiEventId);
       if (event.id !== target.apiEventId) throw new ApiFailure("Cvent API read returned a different event identity");
-      return operation === "getEvent" ? event : this.readCollection(target.apiEventId, operation);
+      if (operation === "listQuestionChoices" && (!object(input) || Object.keys(input).some(key => key !== "questionId") || !UUID.test(input.questionId || ""))) throw new ApiFailure("listQuestionChoices requires only an explicit questionId");
+      return operation === "getEvent" ? event : this.readCollection(target.apiEventId, operation, null, operation === "listQuestionChoices" ? input.questionId : null);
     }
     const { event, client } = await this.assertTarget(target);
-    if (operation === "configureDiscount") return this.configureDiscount(target, event, input, beforeWrite, recordEvidence);
+    if (operation === "configureDiscount" || operation === "configureVolumeDiscount") return this.configureDiscount(target, event, input, beforeWrite, recordEvidence, operation === "configureVolumeDiscount" ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE");
     if (operation === "updateEvent" || operation === "updateEventBasics") {
       const body = buildEventUpdate(event, input);
       const configured = await this.client(target.apiEventId, "configuration", event);

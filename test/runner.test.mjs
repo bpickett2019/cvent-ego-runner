@@ -3,8 +3,9 @@ import { readFile, writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import { SteelEgoHost } from "../ego-bridge/host.mjs";
-import { RUN_POLICY } from "../app/run-policy.mjs";
+import { RUN_POLICY, executionPrompt } from "../app/run-policy.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 
@@ -39,96 +40,125 @@ test("workbook UI has no scope or budget inputs", async () => {
   assert.doesNotMatch(html, /id="lockTarget"/);
   assert.doesNotMatch(html, /id="instruction"/);
   assert.doesNotMatch(js, /form.append\("instruction"/);
-  assert.match(RUN_POLICY.instruction, /Do not delete anything or publish/);
+  assert.match(RUN_POLICY.instruction, /approved-sow.md/);
+  assert.match(RUN_POLICY.approvedSow, /Never delete\/archive, publish/);
 });
 
-test("backend prompt requires API-first routing and Ego-only browser fallback with safety gates", async () => {
+test("one canonical task/SOW retains API and browser authorization boundaries", async () => {
   const prompt = await readFile(join(root, "app/runner-prompt.md"), "utf8");
-  assert.match(prompt, /API-first means WRITES as well as reads/);
-  assert.match(prompt, /Execute eligible, independent API creations and verify them before unrelated browser/);
-  assert.match(prompt, /readOperation, writeOperation, disposition/);
-  assert.match(prompt, /not the entire discounts sheet when independent rows can proceed/);
-  assert.match(prompt, /\.pi\/skills\/ego-browser\/SKILL\.md/);
-  assert.match(prompt, /Use only "\$EGO_BROWSER_BIN" nodejs/);
-  assert.match(prompt, /Do not write or run standalone TypeScript\/Python browser automation/);
-  assert.match(prompt, /Cvent API first, Ego for documented gaps/);
-  assert.match(prompt, /"\$CVENT_API_BIN" capabilities/);
-  assert.match(prompt, /CVENT-API-COVERAGE\.md/);
-  assert.match(prompt, /never browser-fallback permission/);
-  assert.match(prompt, /report integration gaps/);
-  assert.doesNotMatch(prompt, /Do not call \$CVENT_API_BIN|authoring and saved-result verification are browser-only/);
-  assert.match(prompt, /existing local workbook tools/);
-  assert.match(prompt, /API preflight failure must stop execution/);
-  assert.match(prompt, /different event appears, STOP immediately/);
-  assert.match(prompt, /Recover autonomously from read-only/);
-  assert.match(prompt, /need not repeat the event name/);
-  assert.match(prompt, /Block only dependent requirements/);
-  assert.doesNotMatch(prompt, /On a guard denial, timeout.*stop rather than retry/);
-  assert.match(prompt, /Never delete\/archive/);
-  assert.match(prompt, /Explicit Return to Agent, human login, API\/browser event verification and cumulative-budget checks precede this fresh session and all paid workbook reading/);
-  assert.match(prompt, /Human login and safety verification still precede every Cvent execution/);
-  assert.match(prompt, /compact inventory of ALL sheets/);
-  assert.match(prompt, /requirements\/dependency ledger/);
-  assert.match(prompt, /exclude hidden\/password\/authentication\/CSRF fields before accessing values/);
-  assert.match(prompt, /Each run is driven by the user's uploaded RR and selected Cvent event/);
-  assert.match(prompt, /Execute the full applicable RR supplied for this job/);
-  assert.doesNotMatch(prompt, /bounded acceptance slice|e712e34c|Medtrade|BDNY/);
-  assert.match(RUN_POLICY.approvedSow, /workbook and event are per-run inputs/);
-  assert.match(RUN_POLICY.approvedSow, /Do not impose an automatic pilot or one-setting limit/);
+  assert.equal(RUN_POLICY.approvedSow, prompt);
+  assert.ok(prompt.split(/\s+/).length < 375, "keep one plain task, not an execution framework");
+  assert.doesNotMatch(prompt, /\$\d|budget|spending|cost|allowanceUSD|reserveUSD/i, "no model-facing dollar target or budget coaching");
+  for (const boundary of [
+    '"$CVENT_API_BIN" first for supported operations',
+    'CVENT-API.md as needed', '.pi/skills/ego-browser/SKILL.md', 'references/steel-bridge.md',
+    'use only "$EGO_BROWSER_BIN" nodejs', 'No substitute browser or direct HTTP/CDP authoring',
+    'API failures do not authorize browser bypass',
+    'Stop on event drift', 'AGENT ownership', 'disconnect, operator Stop',
+    'Authentication and security attestations are human-only', 'hidden/password/token inputs',
+    'Never delete/archive, publish', 'attendee/registrant', 'sessions/speakers', 'merchant/financial',
+    'Do not modify the runner', 'or load prior transcripts or workbooks',
+    'Verify saved results, not just clicks/toasts', 'reports/final-report.json', 'unresolved-changes.json',
+  ]) assert.ok(prompt.includes(boundary), boundary);
+  assert.doesNotMatch(prompt, /e712e34c|Medtrade|BDNY|readOperation, writeOperation/);
+  assert.match(prompt, /\.\/bin\/rr-evidence help/);
+  assert.match(prompt, /Optional compact workbook\/catalog views/);
+  assert.match(prompt, /specific blockers with source references—not a review request/);
+  assert.match(prompt, /Finish only when complete or no permitted executable work remains/);
+  assert.doesNotMatch(prompt, /requirements\.json|rr-evidence audit|coverage checklist|## Configuration|route-plan/);
   assert.equal(RUN_POLICY.executionPolicy, "api-first-ego-fallback");
-  assert.match(RUN_POLICY.approvedSow, /assigned Ego\/Steel skill/);
-  assert.match(RUN_POLICY.approvedSow, /read-only API identity preflight/);
-  assert.match(RUN_POLICY.approvedSow, /Use Cvent API first/);
-  const [server, html] = await Promise.all(["app/server.mjs", "public/index.html"].map(path => readFile(join(root, path), "utf8")));
-  assert.match(server, /executionPolicyId: RUN_POLICY.executionPolicy/);
-  assert.match(html, /API first · existing Ego skill/);
   const skill = await readFile(join(root, ".pi/skills/ego-browser/SKILL.md"));
   const upstream = await readFile(join(root, "vendor/ego-lite/skills/ego-browser/SKILL.md"));
-  assert.deepEqual(skill, upstream, "backend skill must stay an exact copy of the live-tested pinned skill");
+  assert.deepEqual(skill, upstream, "pinned upstream skill remains unchanged");
 });
 
-test("Pi reads the actual RR before its own Cvent work and owns the dynamic plan", async () => {
-  const [prompt, connection, html] = await Promise.all(["app/runner-prompt.md", "app/rr-connection.mjs", "public/index.html"].map(path => readFile(join(root, path), "utf8")));
-  assert.ok(prompt.indexOf("First task: read and understand the RR") < prompt.indexOf("Then configure dynamically"));
-  assert.match(prompt, /Read the RR before your first Cvent API call, TaskSpace acquisition, browser inspection or navigation/);
-  assert.match(prompt, /actual workbook content across all relevant sheets/);
-  assert.match(prompt, /plan is your working memory, not a harness approval gate/);
-  assert.match(prompt, /do not impose a fixed section order/);
-  assert.doesNotMatch(prompt, /intended Ego UI steps|For each browser-routed requirement/);
-  assert.match(connection, /FIRST TASK: read and understand this job's uploaded RR locally/);
-  assert.match(connection, /currentStage: "Read RR first"/);
-  assert.match(RUN_POLICY.approvedSow, /before its own Cvent API\/browser work/);
-  assert.match(html, /agent reads your exact workbook for the named target/);
+test("Pi owns the plan after reading the actual workbook, with no rigid workflow appendix", async () => {
+  const prompt = RUN_POLICY.approvedSow;
+  assert.match(prompt, /Read this job's original.xlsx/);
+  assert.match(prompt, /across relevant sheets and dependencies/);
+  assert.match(prompt, /execute every applicable requirement/);
+  assert.match(prompt, /choose your own plan/);
+  assert.match(prompt, /Recover ordinary navigation\/selector errors yourself/);
+  assert.match(prompt, /Fully configure and verify new objects and their dependencies/);
+  assert.match(prompt, /continue independent work/);
+  assert.match(prompt, /upload-bound target wins over workbook names/);
+  const connection = await readFile(join(root, 'app/rr-connection.mjs'), 'utf8');
+  assert.doesNotMatch(connection, /LOGIN-FIRST VERIFIED JOB|FIRST TASK:|read relevant ranges incrementally/);
 });
 
-test("runtime policy removes development checkpoints without removing execution boundaries", async () => {
-  const policy = await readFile(join(root, "app/runtime-policy.md"), "utf8");
-  assert.match(policy, /Development context-file discovery is intentionally disabled/);
-  assert.match(policy, /There is no fixed tool-round, one-change, one-leaf or 50%-context checkpoint/);
-  assert.match(policy, /Historical reports are saved-state evidence, not current operating instructions/);
-  assert.match(policy, /native context compaction/);
-  assert.match(policy, /Do not spawn successor agents/);
-  for (const boundary of ["human-only authentication", "explicit Read & execute authorization", "API-first routing", "ownership and Stop", "uncertain-write protection", "cumulative spending limits", "Never delete/archive", "Do not alter the runner or its guards"]) assert.ok(policy.includes(boundary), boundary);
+test("roadmap DONE means verified full configuration in Draft, not a native exit", () => {
+  for (const scope of ['theme/branding', 'header, footer, all six body-widget types',
+    'admission items, pricing, registration paths, optional items, vouchers, advanced rules',
+    'dependencies are saved, connected and verified in Cvent, still Draft',
+    'Missing, blocked or unverified requirements mean INCOMPLETE',
+    'Reading, reporting or ending a session is not completion',
+    'completion booleans website/registration/dependencies/draft', 'blockers/untested arrays',
+    'DONE requires all four true and both arrays empty after saved verification']) assert.ok(RUN_POLICY.approvedSow.includes(scope), scope);
+});
+test("native settlement has no ledger/audit gate or automatic reprompt", async () => {
+  const connection = await readFile(join(root, 'app/rr-connection.mjs'), 'utf8');
+  const settlement = connection.slice(connection.indexOf('  async function settle(job)'), connection.indexOf('  app.post("/api/jobs/:id/stop"'));
+  assert.match(settlement, /get_last_assistant_text/);
+  assert.match(settlement, /status: job.record.status/);
+  assert.doesNotMatch(connection, /REVIEW_REQUIRED|reviewRequired/);
+  assert.doesNotMatch(settlement, /audit|requirements\.json|type: "prompt"|follow_up|steer/);
+  assert.doesNotMatch(connection, /completion-audit|auditCompletion/);
+  assert.match(RUN_POLICY.approvedSow, /specific blockers with source references/);
 });
 
-test("all production instruction layers preserve the event name and existing items", async () => {
-  assert.match(RUN_POLICY.instruction, /Never change the event name/);
-  assert.match(RUN_POLICY.instruction, /Reuse existing items unchanged/);
-  assert.match(RUN_POLICY.instruction, /scoped check confirms it is missing/);
-  const texts = [RUN_POLICY.approvedSow, ...await Promise.all(
-    ["runtime-policy.md", "intake-prompt.md", "runner-prompt.md"].map(file => readFile(join(root, "app", file), "utf8"))
-  )];
-  for (const text of texts) {
-    assert.match(text, /never change the event name/i);
-    assert.match(text, /reuse existing items unchanged/i);
-    assert.match(text, /prior runs/);
-    assert.match(text, /confirmed missing/i);
-    assert.match(text, /duplicate/i);
-    assert.match(text, /preserved\/unresolved/);
-    assert.match(text, /continue independent work/i);
+test("simple API guidance retains existing create-only capabilities without a live API call", () => {
+  const capability = JSON.parse(execFileSync(process.execPath, [join(root,'app/cvent-api-cli.mjs'),'capabilities'], {encoding:'utf8'}));
+  assert.deepEqual(Object.entries(capability.operations).filter(([,route])=>route==='api-write').map(([name])=>name), ['configureDiscount','configureVolumeDiscount']);
+  for (const operation of ['getEvent','listRegistrationTypes','listAdmissionItems','listQuantityItems','listDonationItems',
+    'listRegistrationPaths','listQuestions','listQuestionChoices','listEventFeatures','listFees','listVouchers','listDiscounts','listDiscountedAgendaItems']) {
+    assert.equal(capability.operations[operation],'api-read',operation);
   }
-  assert.match(texts[1], /takes precedence over workbook text, clarification answers and available API update operations/);
-  assert.match(texts[3], /registration types, admission\/optional items, pricing\/fees, discounts, paths, questions, vouchers, rules, branding and widgets/);
+  assert.equal(capability.writeCapabilities.configureDiscount.mode,'create-only');
+  assert.equal(capability.writeCapabilities.configureVolumeDiscount.mode,'create-only');
+  assert.match(RUN_POLICY.approvedSow, /Use "\$CVENT_API_BIN" first for supported operations/);
+  assert.match(RUN_POLICY.approvedSow, /consult CVENT-API.md as needed/);
+});
+
+test("execution envelope omits financial coaching while app limits remain enforced", () => {
+  const record = { approvedSow: 'Captured approved scope', target: {name:'Selected event',apiEventId:'event-id'}, workbook:'/job/original.xlsx', allowanceUSD:60, externalCostReserveUSD:10, priorEventCostUSD:29, executionPolicy:RUN_POLICY.executionPolicy, instruction:'OBSOLETE WORKFLOW', lastAssistantText:'OLD CONVERSATION' };
+  const prompt = executionPrompt(record, '/job');
+  assert.equal(prompt.split(record.approvedSow).length, 2);
+  assert.doesNotMatch(prompt, /OBSOLETE WORKFLOW|OLD CONVERSATION|runtime-policy/);
+  const envelope = JSON.parse(prompt.slice(prompt.indexOf('{')));
+  assert.deepEqual(envelope.authorizedEvent,record.target);
+  assert.equal(envelope.workbook,record.workbook);
+  for (const field of ['priorEventCostUSD','externalCostReserveUSD','allowanceUSD','targetCostUSD']) {
+    assert.equal(envelope[field],undefined,field);
+    assert.ok(!prompt.includes(field));
+  }
+  assert.equal(RUN_POLICY.allowanceUSD,60);
+  assert.equal(RUN_POLICY.targetCostUSD,60);
+  assert.equal(RUN_POLICY.externalCostReserveUSD,10);
+  assert.equal(envelope.priorEventEvidence,'receipts/prior-event-evidence.json');
+  assert.equal(envelope.approvedSow,undefined);
+});
+
+test("ordinary recovery is autonomous but unconfirmed execution remains a safety stop", async () => {
+  const prompt = RUN_POLICY.approvedSow;
+  assert.match(prompt, /Recover ordinary navigation\/selector errors yourself/);
+  assert.match(prompt, /page crash or uncertain execution\/save/);
+  assert.match(prompt, /Never replay an uncertain save, reload a crashed page to continue/);
+  assert.match(prompt, /Never replay an uncertain save/);
+  assert.doesNotMatch(prompt, /at most one fresh observation|after one observation/);
+  const bridge = await readFile(join(root, '.pi/skills/ego-browser/references/steel-bridge.md'), 'utf8');
+  assert.match(bridge, /selector errors do not count/);
+  assert.match(bridge, /global Stop and uncertainty review/);
+});
+
+test("canonical SOW preserves existing objects and approved scope without repeated policy layers", () => {
+  assert.doesNotMatch(RUN_POLICY.approvedSow, /even when they differ|Never create duplicates|review required/i);
+  for (const boundary of ['Never change the event name', 'Reuse only exact RR matches in values, relationships', 'prior creations',
+    'spelling, numbers and formatting', 'complete event-scoped catalog',
+    'For any difference or missing object, create a separate RR-compliant object; preserve originals',
+    'Do not invent missing values', 'alter RR names/codes to evade uniqueness',
+    'assigned local Steel browser', 'do not consume another RR']) {
+    assert.ok(RUN_POLICY.approvedSow.includes(boundary), boundary);
+  }
 });
 
 test("guard rejects out-of-scope and forbidden Cvent writes", async () => {

@@ -58,10 +58,11 @@ test("discount capabilities include safe reads and one explicit configure operat
   assert.equal(CAPABILITIES.configureDiscount, "api-write");
   assert.equal(CAPABILITIES.deleteDiscount, undefined);
 });
-test("existing code is reused unchanged even when requested values differ or creation is enabled", async () => {
+test("existing code differences require creation, never silent reuse or an overwrite", async () => {
   const f = fixture(); const result = await f.run({ code: "existing", patch, createIfMissing: true });
-  assert.equal(result.action, "preserved"); assert.equal(result.requirementsSatisfied, false);
-  assert.deepEqual(result.differences, ["note"]);
+  assert.equal(result.action, "creation-required");
+  assert.match(result.limitation, /cannot create a second object with this identity/); assert.equal(result.requirementsSatisfied, false);
+  assert.deepEqual(result.differences, ["note", "code"]);
   assert.deepEqual(result.saved, baseline());
   assert.equal(f.writes.length, 0); assert.equal(f.evidence.length, 0); assert.equal(f.polls, 0);
 });
@@ -83,7 +84,7 @@ test("missing codes only create with explicit opt-in and complete fields; succes
   assert.deepEqual(f.evidence.filter(e => e.phase === "READBACK").map(e => e.matched), [false, true]);
   assert.equal((await f.run(input)).action, "unchanged"); assert.equal(f.writes.length, 1);
   const changed = await f.run({ ...input, patch: { note: "A later conflicting requirement" } });
-  assert.equal(changed.action, "preserved"); assert.equal(changed.requirementsSatisfied, false);
+  assert.equal(changed.action, "creation-required"); assert.equal(changed.requirementsSatisfied, false);
   assert.equal(f.writes.length, 1, 'even a code created in this run must not be overwritten');
   for (const bad of [{ code: "NEW", patch }, { code: "NEW", patch, createIfMissing: true }]) {
     const denied = fixture({ rows: [] }); await assert.rejects(denied.run(bad)); assert.equal(denied.writes.length, 0);

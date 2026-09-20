@@ -7,7 +7,7 @@ import { CAPABILITIES, CventConnection, ApiFailure } from "./cvent-api.mjs";
 
 // Production RR writes are create-only. Keep the underlying adapter's legacy
 // update helpers for separate integrations, but never expose them as RR grants.
-const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name, route]) => route === "api-read" || name === "configureDiscount"));
+const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name, route]) => route === "api-read" || ["configureDiscount", "configureVolumeDiscount"].includes(name)));
 const blockedOperations = Object.fromEntries(Object.keys(CAPABILITIES).filter(name => !Object.hasOwn(operations, name)).map(name => [name, "Preserve existing items and event settings; updates are prohibited"]));
 const read = async path => JSON.parse(await readFile(path, "utf8"));
 async function save(path, value) {
@@ -18,7 +18,7 @@ async function save(path, value) {
 async function main() {
   const operation = process.argv[2];
   if (operation === "capabilities") {
-    console.log(JSON.stringify({ operations, blockedOperations, writeCapabilities: { configureDiscount: { mode: "create-only", supports: ["final-total codes", "new item-scoped codes with AdmissionItem/QuantityItem links"], existingItems: "preserve unchanged, including existing discount associations", verification: "complete API catalog and saved-state readback; never resend uncertain writes", limitations: ["volume discounts not integrated", "no standalone link/update of existing discounts", "1–100 explicit scoped items per new code"] } }, preservation: "Never rename the event. Reuse existing items unchanged; create only confirmed missing RR-required items. A preserved difference is not requirement satisfaction.", browser: "Only for documented unsupported operations; authentication, policy errors, rate limits and uncertain writes must not be bypassed", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
+    console.log(JSON.stringify({ operations, blockedOperations, writeCapabilities: { configureDiscount: { mode: "create-only", supports: ["final-total codes", "new item-scoped codes with AdmissionItem/QuantityItem links"], existingItems: "preserve unchanged, including existing discount associations", verification: "complete API catalog and saved-state readback; never resend uncertain writes", limitations: ["no standalone link/update of existing discounts", "1–100 explicit scoped items per new code"] }, configureVolumeDiscount: { mode: "create-only", supports: ["new named event volume discounts", "initial AdmissionItem/QuantityItem links", "ALL/AFTER_THRESHOLD_LIMIT/BEFORE_THRESHOLD_LIMIT/EVERY_NTH_REGISTRANT"], existingItems: "preserve existing names, rules and associations; no standalone updates", verification: "complete catalogs, durable intent, independent readback; no uncertain replay", limitations: ["1–100 explicit scoped items if supplied", "explicit threshold, interval and primary-registrant flags required"] } }, preservation: "Never rename the event or edit originals. Reuse exact RR matches only; differences require separate RR-compliant creations. Never alter RR names/codes to evade uniqueness.", browser: "Same-identity variant creation is not supported by this adapter. Ego may create a separate RR-compliant object if Cvent supports it. Authentication, policy errors, rate limits and uncertain writes must not be bypassed", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
     return;
   }
   if (!Object.hasOwn(CAPABILITIES, operation)) throw new ApiFailure("Use a supported operation from cvent-api capabilities");
@@ -30,7 +30,10 @@ async function main() {
   if (runtime.ownership !== "AGENT") throw new ApiFailure("Browser/execution control belongs to the user; API execution stopped");
   const uncertainPath = join(workspace, "api-write-uncertain.json");
   const currentNamePath = join(workspace, "api-current-event.json");
-  const discountStatePath = join(workspace, "api-discounts.json");
+  const volume = operation === "configureVolumeDiscount";
+  const discountOperation = volume || operation === "configureDiscount";
+  const identityKey = volume ? "name" : "code";
+  const discountStatePath = join(workspace, volume ? "api-volume-discounts.json" : "api-discounts.json");
   if (existsSync(uncertainPath) && CAPABILITIES[operation] === "api-write") throw new ApiFailure("Prior API write is uncertain. Read authoritative state and request reconciliation; do not replay or use browser fallback");
   const chunks = []; let bytes = 0;
   for await (const chunk of process.stdin) { bytes += chunk.length; if (bytes > 100_000) throw new ApiFailure("API input too large"); chunks.push(chunk); }
@@ -51,8 +54,8 @@ async function main() {
     const target = { ...job.target, name: currentName?.name || job.target.name };
     const data = structuredClone(input.data ?? input);
     let discountState = null, discountKey = null;
-    if (operation === "configureDiscount" && data && typeof data.code === "string") {
-      discountKey = data.code.trim().toUpperCase();
+    if (discountOperation && data && typeof data[identityKey] === "string") {
+      discountKey = volume ? data.name : data.code.trim().toUpperCase();
       discountState = existsSync(discountStatePath) ? await read(discountStatePath) : { eventId: target.apiEventId, discounts: {} };
       if (discountState.eventId !== target.apiEventId || !discountState.discounts || typeof discountState.discounts !== "object" || Array.isArray(discountState.discounts)) throw new ApiFailure("Saved discount identities do not belong to this event");
       const knownId = Object.hasOwn(discountState.discounts, discountKey) ? discountState.discounts[discountKey] : null;
@@ -65,13 +68,13 @@ async function main() {
     const sentLinks = new Set(), verifiedLinks = new Set();
     const result = await api.execute(target, operation, data, async prepared => {
       const root = `/events/${job.target.apiEventId}/discounts`;
-      const create = !dispatched && prepared?.method === "POST" && prepared.path === root && prepared.baseline === null;
+      const create = !dispatched && prepared?.method === "POST" && prepared.path === root && prepared.baseline === null && prepared.body?.type === (volume ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE");
       const link = createdId && !finalized && prepared?.phase === "LINK_NEW_DISCOUNT_ITEM" && prepared.method === "PUT" && prepared.discountId === createdId && prepared.baseline === null &&
         data.agendaItems?.some(item => isDeepStrictEqual(item, prepared.agendaItem)) && !sentLinks.has(prepared.agendaItem.id) && prepared.path === `${root}/${createdId}/agenda-items/${prepared.agendaItem.id}`;
       const finalize = createdId && !finalized && prepared?.phase === "FINALIZE_NEW_DISCOUNT" && prepared.method === "PUT" && prepared.discountId === createdId && prepared.baseline?.id === createdId && prepared.path === `${root}/${createdId}` &&
         data.agendaItems?.length > 0 && data.agendaItems.every(item => verifiedLinks.has(`${item.type}:${item.id}`)) &&
-        isDeepStrictEqual(prepared.body, { ...receipt.prepared.body, active: data.patch.active, applyToAllAgendaItems: true });
-      if (operation !== "configureDiscount" || !(create || link || finalize)) throw new ApiFailure("RR preservation policy permits only confirmed-missing discount creation and its initial configuration; existing-item writes are prohibited");
+        isDeepStrictEqual(prepared.body, { ...receipt.prepared.body, active: data.patch.active, ...(volume ? {} : { applyToAllAgendaItems: true }) });
+      if (!discountOperation || !(create || link || finalize)) throw new ApiFailure("RR preservation policy permits only confirmed-missing discount creation and its initial configuration; existing-item writes are prohibited");
       if (!Array.isArray(input.rrReferences) || !input.rrReferences.length || !input.rrReferences.every(value => typeof value === "string" && value.trim())) throw new ApiFailure("API writes require RR source references");
       const latestJob = await read(join(workspace, "job.json"));
       const latest = await read(runtimePath);
@@ -90,12 +93,12 @@ async function main() {
       if (!dispatched) throw new ApiFailure("Write evidence requires durable intent first");
       (receipt.writeEvidence ??= []).push(evidence);
       await save(receiptPath, { ...receipt, status: "INTENT_REQUIRES_RECONCILIATION" });
-      if (!createdId && receipt.prepared.method === "POST" && evidence.phase === "READBACK" && evidence.matched && evidence.saved?.id === evidence.discountId && evidence.saved?.code === receipt.prepared.body.code) createdId = evidence.discountId;
+      if (!createdId && receipt.prepared.method === "POST" && evidence.phase === "READBACK" && evidence.matched && evidence.saved?.id === evidence.discountId && evidence.saved?.type === receipt.prepared.body.type && evidence.saved?.[identityKey] === receipt.prepared.body[identityKey]) createdId = evidence.discountId;
       if (evidence.phase === "LINK_READBACK" && evidence.matched && evidence.discountId === createdId) for (const key of evidence.links) verifiedLinks.add(key);
     });
-    await save(receiptPath, { ...receipt, status: result.requirementsSatisfied === false ? "PRESERVED_DIFFERENCE" : "PASS", completedAt: new Date().toISOString(), result });
+    await save(receiptPath, { ...receipt, status: result.requirementsSatisfied === false ? "CREATION_REQUIRED" : "PASS", completedAt: new Date().toISOString(), result });
     if (discountState && result.verified && result.discountId) {
-      discountState.discounts[discountKey] = result.discountId;
+      discountState.discounts = { ...discountState.discounts, [discountKey]: result.discountId };
       await save(discountStatePath, discountState);
     }
     if (dispatched) {
@@ -103,7 +106,7 @@ async function main() {
       const { unlink } = await import("node:fs/promises");
       await unlink(uncertainPath);
     }
-    console.log(JSON.stringify({ receipt: receiptPath, operation, route: "api", verified: true, eventId: job.target.apiEventId, ...(result.action ? { action: result.action, requirementsSatisfied: result.requirementsSatisfied, differences: result.differences } : {}), ...(Array.isArray(result) ? { count: result.length } : {}) }));
+    console.log(JSON.stringify({ receipt: receiptPath, operation, route: "api", verified: true, eventId: job.target.apiEventId, ...(result.action ? { action: result.action, requirementsSatisfied: result.requirementsSatisfied, differences: result.differences, ...(result.limitation ? { limitation: result.limitation } : {}) } : {}), ...(Array.isArray(result) ? { count: result.length } : {}) }));
   } catch (error) {
     await save(receiptPath, { ...receipt, status: dispatched ? "UNCERTAIN" : "BLOCKED", message: error instanceof ApiFailure ? error.message : "Cvent API operation failed; inspect the receipt and reconcile before further writes", httpStatus: error.status ?? null, diagnostic: error instanceof ApiFailure ? error.diagnostic : undefined });
     throw error;

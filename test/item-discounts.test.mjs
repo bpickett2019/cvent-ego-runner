@@ -67,7 +67,7 @@ test("item-scoped code is created inactive, linked via API, finalized once, and 
 });
 test("existing discounts and their links are preserved even when requirements differ", async () => {
   const f = fixture({ existing: true }); const before = structuredClone(f.row);
-  const result = await f.run(); assert.equal(result.action, "preserved"); assert.equal(result.requirementsSatisfied, false);
+  const result = await f.run(); assert.equal(result.action, "creation-required"); assert.equal(result.requirementsSatisfied, false);
   assert.deepEqual(result.differences, ["agendaItems"]); assert.deepEqual(f.row, before); assert.equal(f.writes.length, 0);
 });
 test("missing, foreign, duplicate or malformed catalogs block before discount creation", async () => {

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const exec = promisify(execFile);
 const IMAGE = 'sha256:21cf2a5785aa9478d0f7933c04bce96ca79f3d7a93d9824ea184800d29d3cd02';
@@ -11,6 +11,36 @@ export function steelOrigin(raw) {
   return url.origin;
 }
 const docker = async args => (await exec('docker', args, { timeout: 90000, maxBuffer: 100000 })).stdout.trim();
+// Stop only this job's provenance-checked container. Retain its filesystem,
+// profile and evidence; a stopped container consumes no browser memory.
+export async function stopJobBrowser({ root, record, run = docker }) {
+  if (!uuid.test(record.id)) throw new Error('Invalid browser job identity');
+  const container = `cvent-build-${record.id}`;
+  const profile = join(root, 'data/browser-profiles', record.id);
+  let created;
+  try { created = JSON.parse(await readFile(join(record.workspace, 'receipts/clean-browser.json'), 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  if (created.jobId !== record.id || created.container !== container || created.image !== IMAGE || created.profile !== profile) throw new Error('Browser cleanup provenance mismatch');
+  const receipt = { jobId: record.id, container, requestedAt: new Date().toISOString(), status: 'STOPPING', profilesPreserved: true };
+  const save = () => writeFile(join(record.workspace, 'receipts/steel-cleanup.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+  await save();
+  try {
+    const found = await run(['ps', '-a', '--filter', `name=^/${container}$`, '--format', '{{.ID}}']);
+    if (found.trim()) {
+      const [info] = JSON.parse(await run(['inspect', container]));
+      if (info.Name !== `/${container}` || info.Config?.Labels?.['cvent.runner.job'] !== record.id || info.Image !== IMAGE || !/^[a-f0-9]{64}$/.test(info.Id)) throw new Error('Browser cleanup container identity mismatch');
+      // Address the immutable ID, never a name which could be reassigned.
+      if (info.State?.Running) await run(['stop', '--time', '10', info.Id]);
+      const [after] = JSON.parse(await run(['inspect', info.Id]));
+      if (after.Id !== info.Id || after.State?.Running !== false || after.State?.Pid !== 0) throw new Error('Steel process termination not confirmed');
+    }
+    receipt.status = 'STOPPED'; receipt.stoppedAt = new Date().toISOString();
+    await save();
+  } catch (error) {
+    receipt.status = 'FAILED'; receipt.error = 'Steel cleanup requires reconciliation';
+    await save(); throw error;
+  }
+}
 export async function provisionCleanBrowser({ root, record, cancelled = () => false, run = docker, fetchJson = async url => {
   const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
   if (!r.ok) throw new Error('Steel not ready');
@@ -60,8 +90,9 @@ export async function provisionCleanBrowser({ root, record, cancelled = () => fa
     receipt.status = 'READY'; receipt.steelSessionId = runtime.steelSessionId; receipt.activeTargetId = page.id;
     await save(); return runtime;
   } catch (error) {
-    receipt.status = 'FAILED'; receipt.error = 'Provisioning failed or was cancelled; profile and container retained for review'; await save();
-    // No rm/release/retry of a possibly-created browser. Evidence and profile remain.
+    receipt.status = 'FAILED'; receipt.error = 'Provisioning failed or was cancelled; profile and evidence retained'; await save();
+    try { await stopJobBrowser({ root, record, run }); }
+    catch { receipt.cleanupFailed = true; await save(); }
     throw error;
   }
 }
