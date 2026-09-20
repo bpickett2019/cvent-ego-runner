@@ -1,0 +1,26 @@
+{
+  "name": "cvent-ego-runner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single-user Pi + Ego + self-hosted Steel Cvent draft runner",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node app/server.mjs",
+    "check:repository": "node scripts/check-repository.mjs",
+    "rr": "python3 app/parse_rr.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "express": "5.1.0",
+    "http-proxy": "1.18.1",
+    "multer": "2.0.2",
+    "ws": "8.18.3"
+  }
+}

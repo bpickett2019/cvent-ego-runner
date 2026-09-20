@@ -1,0 +1,3 @@
+[submodule "vendor/ego-lite"]
+	path = vendor/ego-lite
+	url = https://github.com/citrolabs/ego-lite.git

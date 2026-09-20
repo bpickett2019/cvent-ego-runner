@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Forge · CVENT Agent workspace</title><link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="staging-banner">RESTRICTED STAGING ACCESS</div>
+  <aside class="sidebar">
+    <div class="sidebar-panel">
+      <a class="brand" href="#workspace"><span class="brand-mark">F</span><span><strong>Forge</strong><small>EVENT OPERATIONS</small></span></a>
+      <p class="nav-caption">OPERATOR WORKFLOW</p>
+      <nav aria-label="Operator workflow">
+        <a class="selected" href="#workspace"><span>⌂</span><div><strong>CVENT Agent</strong><small>Workspace overview</small></div></a>
+        <a href="#safeguards"><span>◆</span><div><strong>Run safeguards</strong><small>Writable event<br>configuration</small></div></a>
+        <a href="#intake"><span>▤</span><div><strong>Event intake</strong><small>Upload and bind</small></div></a>
+        <a href="#workbook"><span>◉</span><div><strong>RR workbook</strong><small>Edit source evidence</small></div></a>
+        <a href="#browserDetails"><span>▣</span><div><strong>CVENT browser</strong><small>Watch and take control</small></div></a>
+      </nav>
+      <div class="workspace-switcher"><strong><i class="status-dot"></i> Private workspace</strong><p>1 local user · clean browser per build</p>
+        <button class="profile selected" id="profile1">● USER 1 <span>SELECTED</span></button>
+        <button class="profile" disabled title="Separate user/browser isolation is not configured">USER 2 <span>UNAVAILABLE</span></button>
+        <button class="profile" disabled title="Separate user/browser isolation is not configured">USER 3 <span>UNAVAILABLE</span></button>
+      </div>
+    </div>
+    <div class="local-user"><span>LD</span><div>Local developer<small>Local access · single user</small></div></div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar"><div>Event Operations <b>/</b> <strong>CVENT Agent workspace</strong></div><span class="profile-pill">USER 1 <small>FRESH LOGIN PER BUILD</small></span><span class="restricted"><i></i> RESTRICTED STAGING ACCESS</span></header>
+    <main id="workspace">
+      <section class="hero"><p class="eyebrow">CVENT AGENT · LOCAL WORKSPACE</p><div class="hero-title"><h1>Build a protected Cvent mock</h1><span class="pill" id="draftBadge">DRAFT ONLY</span></div><p>Your uploads, job state, CVENT Agent session, Steel browser, evidence, and reports stay in this local workspace.</p></section>
+      <ol class="steps" aria-label="Build progress"><li id="step1"><span>1</span> RR uploaded</li><li id="step2"><span>2</span> Understand requirements</li><li id="step3"><span>3</span> Find &amp; verify event</li><li id="step4"><span>4</span> Open browser and build</li></ol>
+      <section class="panel event-card"><span class="event-monogram">CV</span><div class="event-description"><h2 id="eventTitle">Name your target Cvent event</h2><p>Only the event bound to this upload may be opened or configured. The RR supplies requirements, never the target event identity.</p><small id="targetStatus">Enter the exact existing event name below. Never inferred from the RR.</small></div><div class="timer"><strong id="elapsed">00:00:00</strong><small>Current CVENT Agent execution</small></div></section>
+      <section class="panel safeguards" id="safeguards"><div><p class="eyebrow">LOGIN FIRST · EXECUTION SEPARATELY AUTHORIZED</p><h2>The uploaded RR drives configuration</h2><p>The agent reads your exact workbook for the named target. Never rename the event or edit existing items; reuse them unchanged and create only confirmed missing requirements.</p><span class="safeguards-active">● SAFEGUARDS ACTIVE</span></div><div class="sow-stat"><strong>RR</strong><small>SOURCE OF TRUTH</small></div><div class="sow-stat"><strong>1</strong><small>SELECTED EVENT</small></div><div class="sow-stat"><strong>ON</strong><small>WRITE + VERIFY</small></div></section>
+      <div class="operation-grid">
+        <section class="panel intake" id="intake"><div class="panel-heading"><p class="eyebrow">STEP 1 · EVENT INTAKE</p><h2>RR document</h2><span class="tiny-pill">USER 1 · PROFILE 1</span></div><div class="panel-body">
+          <label class="upload-zone" for="rr"><strong>Upload RR · start a fresh run</strong><span>Each upload gets a new agent context using only this RR. Uses your named Cvent target, never the RR event name. Login and the approved allowance are required before configuration. · .xlsx only</span><input id="rr" type="file" accept=".xlsx"><small>Choose a new .xlsx to prepare a run for User 1</small></label>
+          <label class="field-label" for="eventName">CVENT TARGET FOR A NEW RUN</label><input id="eventName" type="text" maxlength="300" autocomplete="off" placeholder="Exact existing event name" aria-required="true"><small id="bindingNote" class="field-note">Target is locked to this upload when you start. A different RR name never changes it.</small>
+          <label class="field-label">LOGIN STORAGE</label><div class="login-state"><strong id="loginStatus">USER 1 · Human login required</strong><small id="loginHint">Sign in through the browser when prompted. Login does not authorize a different event.</small></div>
+          <div class="actions"><button id="upload" class="primary">START BUILD</button><button id="stop" class="danger" disabled>STOP BUILD</button><button id="openBrowser" class="blue">OPEN BROWSER</button><button id="resetLogin" class="light" disabled title="Login reset is operator-managed; this control never clears credentials or replaces the browser">RESET CVENT LOGIN</button><button id="start" class="light" hidden>RETRY START</button></div>
+          <p class="field-note">START BUILD opens a clean browser. AI starts only after RETURN TO AGENT verifies login and the target; $0 AI spend while waiting. Target under $60 total per completed RR. Unclear content is skipped and reported, not guessed.</p>
+          <p id="message" role="status"></p><p id="cost" aria-live="polite">No paid run started</p><a id="results" hidden>Saved report</a>
+          <section id="questionPanel" hidden><h3 id="questionTitle">Safety or login action required</h3><p id="question"></p><textarea id="answer" rows="3" maxlength="10000" aria-label="Your answer"></textarea><label id="securityConfirmation" hidden><input id="sessionInvalidated" type="checkbox"> I invalidated the previously exposed Cvent session and signed in again.</label><button id="sendAnswer">SEND ANSWER</button><button id="loginDone" hidden>I'VE SIGNED IN · RETURN TO AGENT</button></section>
+        </div></section>
+        <section class="panel status-panel"><div class="panel-heading status-heading"><div><p class="eyebrow">LIVE<br>OPERATION</p><h2>Status</h2></div><select id="jobSelect" aria-label="Current workbook"><option>No RR selected</option></select></div><div class="panel-body"><dl><dt>Current stage</dt><dd id="stage">UPLOAD</dd><dt>Current action</dt><dd id="action">Upload an RR and name the event you started.</dd><dt>CVENT Agent</dt><dd id="status">Not running</dd><dt>Steel browser</dt><dd id="browserStatus">USER CONTROL</dd><dt>Browser strategy</dt><dd>EGO DIRECT · ASSIGNED STEEL RUNTIME</dd></dl><div class="completion-card"><span>✓</span><div><strong id="completionTitle">No completed work yet</strong><small id="completionCount">0 sections completed in this run</small></div></div><div id="progressLists" hidden><h3>Completed</h3><ul id="completed"></ul><h3>Remaining / skipped</h3><ul id="pending"></ul></div></div><div class="activity-console"><p id="plan">No RR uploaded.</p><p id="agentReply"></p><ol id="activity"></ol></div></section>
+      </div>
+      <section class="panel workbook-panel" id="workbook"><div class="workbook-heading"><div><p class="eyebrow">SOURCE EVIDENCE</p><h2>RR workbook editor</h2><p>Edit a local draft before starting the build.<br>Every save retains the original and previous versions.</p><div class="file-chip"><b>X</b><span id="workbookName">No workbook selected<small>USER 1 · DRAFT</small></span></div></div><div class="editor-controls"><select id="sheetSelect" aria-label="Workbook sheet" disabled><option>Choose an RR to preview its sheets</option></select><div class="actions"><button id="previousRows" class="light" disabled>PREVIOUS ROWS</button><button id="nextRows" class="light" disabled>NEXT ROWS</button><button id="revertWorkbook" class="light" disabled>REVERT</button><button id="saveWorkbook" class="primary" disabled>SAVE CHANGES</button></div><small id="editStatus">No unsaved changes · text edits only; formulas preserved, not recalculated.</small></div></div><div id="sheetRange" class="sheet-range">No workbook loaded</div><div class="sheet-scroll"><table id="sheetTable" aria-label="RR workbook cells"><thead></thead><tbody><tr><td class="empty-sheet">Choose an RR above to view and edit its source evidence. No model runs until verified RETURN TO AGENT.</td></tr></tbody></table></div></section>
+      <section id="browserDetails" class="panel browser-panel"><div class="browser-heading"><div><p class="eyebrow">STEP 4 · LIVE BROWSER</p><h2>Cvent browser</h2><p>Complete SSO/MFA in this USER-owned browser, then return control when prompted.<br>The app opens and verifies only the event named with your upload.</p><span class="tiny-pill">USER 1 · PROFILE 1</span><p id="browserControlMessage" role="status" aria-live="polite">TAKE CONTROL returns the browser to you and stops an active build. RETURN TO AGENT hands it back after login and safety verification; stopped builds require a fresh upload.</p></div><div class="browser-controls"><span id="owner" class="eyebrow">USER CONTROL</span><div class="actions"><button id="take" class="primary" disabled>CHECKING<br>CONTROL</button><button id="reloadViewer" class="light">RELOAD<br>VIEWER</button></div></div></div><div id="browserFrame" class="browser-frame" aria-label="Canonical Steel browser viewer"><iframe src="/viewer" title="Canonical Steel browser" loading="lazy"></iframe><div id="shield" class="shield" aria-label="Watch-only interaction shield"><span>WATCH ONLY · use Take Control to interact</span></div></div></section>
+      <footer id="identity">Single Pi after login · API first · existing Ego skill · clean local browser per build</footer>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

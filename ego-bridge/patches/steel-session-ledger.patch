@@ -1,0 +1,14 @@
+diff --git a/package/ego-browser/src/page-ledger.ts b/package/ego-browser/src/page-ledger.ts
+index 8b72d1e..3fb4c38 100644
+--- a/package/ego-browser/src/page-ledger.ts
++++ b/package/ego-browser/src/page-ledger.ts
+@@ -50,7 +50,8 @@ const DEFAULT_STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+ 
+ /** Stable across Agent rounds and Node-service restarts in one Ego Lite run. */
+ export function runtimeInstanceId(parentPid = process.ppid): string {
+-  return `browser-host:${parentPid}`;
++  // Steel rounds have different shell parents but share one assigned browser.
++  return process.env.EGO_BROWSER_INSTANCE_ID || `browser-host:${parentPid}`;
+ }
+ 
+ type AddPageOptions = {

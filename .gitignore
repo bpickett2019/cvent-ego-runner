@@ -1,0 +1,29 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+# Entire runtime trees are private, including future artifact types.
+/data/
+/logs/
+*.log
+*.jsonl
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.har
+*.trace
+*.zip
+*.tar
+*.gz
+*.pem
+*.key
+.env
+.env.*
+*.env
+credentials.json
+auth.json
+# Local agent state; the pinned skill itself is source.
+.pi/sessions/
+.pi/auth.json
+.DS_Store
