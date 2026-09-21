@@ -67,18 +67,8 @@ test("fresh session rejects inherited conversation or spending before any prompt
   }
 });
 
-test("native continuation switches to the exact original idle session without reset", async () => {
-  let switched = false;
-  const { rpc, commands } = nativeFake(command => {
-    if (command.type === "switch_session") { assert.equal(command.sessionPath, "/job/session.jsonl"); switched = true; return { cancelled: false }; }
-    return { sessionId: switched ? "original" : "temporary", sessionFile: switched ? "/job/session.jsonl" : "/tmp/new.jsonl", isStreaming: false, isCompacting: false, pendingMessageCount: 0 };
-  });
-  assert.equal((await rpc.resumeSession("/job/session.jsonl", "original")).sessionId, "original");
-  assert.deepEqual(commands, ["get_state", "switch_session", "get_state"]);
-  const wrong = nativeFake(() => ({ cancelled: false, sessionId: "other", sessionFile: "/other", isStreaming: false, isCompacting: false, pendingMessageCount: 0 }));
-  await assert.rejects(wrong.rpc.resumeSession("/job/session.jsonl", "original"), /Original idle session/);
-  const cancelled = nativeFake(command => command.type === "switch_session" ? { cancelled: true } : { isStreaming: false, isCompacting: false, pendingMessageCount: 0 });
-  await assert.rejects(cancelled.rpc.resumeSession("/job/session.jsonl", "original"), /not confirmed/);
+test("runner transport has no historical-session restoration helper", () => {
+  assert.equal(PiRpc.prototype.resumeSession, undefined);
 });
 
 test("verified identity persists on same-event subscreens but not conflicting identities", () => {
@@ -143,7 +133,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   const root = await mkdtemp(join(tmpdir(), "rr-rpc-test-"));
   await mkdir(join(root, "app"));
   await writeFile(join(root, "app/runner-prompt.md"), "Execute RR, do not rebuild software.");
-  let loggedIn = false, apiReady = false, launches = 0, fake, reportedCost = 3.5;
+  let loggedIn = false, apiReady = false, launches = 0, fake, runtime, reportedCost = 3.5;
   class FakeRpc extends EventEmitter {
     constructor(workspace) { super(); this.commands = []; this.workspace = workspace; this.id = `fresh-${launches}`; this.prompted = false; }
     state() { return { sessionId: this.id, sessionFile: join(this.workspace, 'pi-sessions/fresh.jsonl'), messageCount: 0, isStreaming: false, isCompacting: false, pendingMessageCount: 0, model: { cost: { input: 1 } } }; }
@@ -157,14 +147,19 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   }
   const app = express(); app.use(express.json());
   app.use((req, res, next) => isLocalRequest(req) ? next() : res.sendStatus(403));
-  const connection = mountRR(app, { root, resolveTarget: async name => {
+  const connection = mountRR(app, { root,
+    provisionBrowser: async record => (runtime = {jobId:record.id,runtimeId:record.id,freshProfile:true,ownership:'USER',identityVerified:true,steelSessionId:record.id,activeTargetId:record.id}),
+    stopBrowser: async () => {},
+    prepareTarget: async (name, options) => {
+    if (!loggedIn) throw new Error('Login required');
+    if (!apiReady) throw new Error('API preflight required');
     if (!["Annual Conference", "Independent Event", "Budget Event"].includes(name)) throw new Error("Named event is not confirmed");
     const stub = name === "Annual Conference" ? "abc" : name === "Budget Event" ? "budget" : "independent";
-    return { name, url: `https://app.cvent.com/?evtstub=${stub}`, evtstub: stub, apiEventId: stub };
-  }, verifyLogin: async target => {
-    if (!loggedIn) throw new Error("Login required");
-    return { identityVerified: true, ownership: "AGENT", steelSessionId: "assigned", ...(apiReady ? { apiPreflight: { eventId: target.apiEventId, route: "api" } } : {}) };
-  }, rpcFactory: ({workspace}) => { launches++; fake = new FakeRpc(workspace); return fake; } });
+    const target = { name, url: `https://app.cvent.com/?evtstub=${stub}`, evtstub: stub, apiEventId: stub };
+    await options.beforeBrowser(target);
+    runtime = {...runtime,ownership:'AGENT',apiPreflight:{eventId:stub}};
+    return {target,runtime};
+  }, verifyLogin: async () => runtime, rpcFactory: ({workspace}) => { launches++; fake = new FakeRpc(workspace); return fake; } });
   const server = app.listen(0, "127.0.0.1");
   await new Promise(resolve => server.once("listening", resolve));
   t.after(async () => { await connection.shutdown(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); });
@@ -176,36 +171,38 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.notEqual(first.workspace, second.workspace);
   assert.notEqual(first.sha256, second.sha256);
   assert.equal(second.originalName, "Different RR.xlsx");
-  assert.equal(first.sessionMode, "fresh-on-upload");
-  assert.ok(first.sessionId, "upload initializes an empty session without a paid prompt");
-  assert.notEqual(first.sessionId, second.sessionId);
-  assert.equal(launches, 2);
+  assert.equal(first.sessionMode, "fresh-after-handoff");
+  assert.equal(first.sessionId, undefined);
+  assert.equal(second.sessionId, undefined);
+  assert.equal(launches, 0);
   const duplicate = await upload();
   assert.equal(duplicate.sha256, first.sha256);
   assert.notEqual(duplicate.id, first.id, "even identical bytes are a separate upload/job");
   assert.deepEqual(JSON.parse(await readFile(join(second.workspace, 'state.json'), 'utf8')).completed, []);
   assert.equal(await readFile(first.workbook, "utf8"), "original workbook bytes");
   assert.equal(await readFile(second.workbook, "utf8"), "independent workbook bytes");
-  const approval = { authorizedEventName: "Annual Conference" };
+  const approval = { returnControl: true };
+  const back = id => request(`/api/jobs/${id}/answer`, approval);
+  const start = async id => { const result = await request(`/api/jobs/${id}/read`, {}); return result.status === 200 ? back(id) : result; };
   for (const override of [{ approvedSow: "Publish everything" }, { allowanceUSD: 1000 }, { externalCostReserveUSD: 0 }, { targetCostUSD: 1000 }]) {
     assert.equal((await request(`/api/jobs/${first.id}/start`, { ...approval, ...override })).status, 409, "clients cannot override the fixed run policy");
   }
-  assert.equal((await request(`/api/jobs/${first.id}/start`, approval)).status, 409);
-  assert.equal(launches, 3);
+  assert.equal((await (await start(first.id)).json()).aiStarted, false);
+  assert.equal(launches, 0);
   loggedIn = true;
-  assert.equal((await request(`/api/jobs/${first.id}/start`, approval)).status, 409, "API preflight must pass before paid execution");
-  assert.equal(launches, 3);
+  assert.equal((await (await back(first.id)).json()).aiStarted, false, 'API preflight must pass');
+  assert.equal(launches, 0);
   apiReady = true;
-  assert.equal((await request(`/api/jobs/${first.id}/start`, { ...approval, authorizedEventName: "Unconfirmed Event" })).status, 409);
-  assert.equal(launches, 3);
-  assert.equal((await request(`/api/jobs/${first.id}/start`, approval)).status, 200);
+  assert.equal((await request(`/api/jobs/${first.id}/answer`, { ...approval, authorizedEventName: 'Unconfirmed Event' })).status, 409);
+  assert.equal(launches, 0);
+  assert.equal((await back(first.id)).status, 200);
   assert.equal(fake.commands[0].type, "new_session");
   const prompt = fake.commands.find(c => c.type === 'prompt');
   assert.match(prompt.message, /original.xlsx/);
   assert.match(prompt.message, /Read this job's original.xlsx/);
   assert.doesNotMatch(prompt.message, /allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   const initialState = JSON.parse(await readFile(join(first.workspace, 'state.json'), 'utf8'));
-  assert.equal(initialState.currentStage, 'Read RR first');
+  assert.equal(initialState.currentStage, 'Executing RR');
   assert.ok(prompt.message.startsWith(RUN_POLICY.approvedSow));
   assert.equal(prompt.message.split(RUN_POLICY.approvedSow).length, 2, "SOW occurs once");
   const running = await (await request(`/api/jobs/${first.id}`)).json();
@@ -240,8 +237,8 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal(stopped.status, "STOPPED");
   assert.equal((await request(`/api/jobs/${first.id}/start`, approval)).status, 409);
   assert.equal((await request(`/api/jobs/${first.id}/results/progress.jsonl`)).status, 409, 'historical native traces are never downloadable');
-  assert.equal((await request(`/api/jobs/${second.id}/start`, approval)).status, 409, "new context cannot hide prior uncertain writes to the same event");
-  assert.equal((await request(`/api/jobs/${second.id}/start`, { ...approval, authorizedEventName: "Independent Event" })).status, 200);
+  assert.equal((await request(`/api/jobs/${second.id}/start`, approval)).status, 409, "upload-bound event identity still applies");
+  assert.equal((await start(second.id)).status, 200);
   const secondRunning = await (await request(`/api/jobs/${second.id}`)).json();
   assert.notEqual(secondRunning.sessionId, running.sessionId);
   assert.notEqual(secondRunning.sessionFile, running.sessionFile);
@@ -267,7 +264,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal((await request(`/api/jobs/${second.id}/stop`, {})).status, 409);
   const budgetJob = await upload(undefined, undefined, "Budget Event");
   reportedCost = 50;
-  assert.equal((await request(`/api/jobs/${budgetJob.id}/start`, { authorizedEventName: "Budget Event" })).status, 200);
+  assert.equal((await start(budgetJob.id)).status, 200);
   let budgetResult;
   for (let i = 0; i < 60; i++) {
     budgetResult = await (await request(`/api/jobs/${budgetJob.id}`)).json();
@@ -275,7 +272,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.equal(budgetResult.status, "STOPPED");
-  assert.match(budgetResult.stopReason, /under-\$60 goal/);
+  assert.match(budgetResult.stopReason, /spending threshold/);
   assert.equal(budgetResult.piCostUSD, 50);
   assert.ok(fake.commands.some(command => command.type === "clear_queue"));
   reportedCost = 3.5;
@@ -283,5 +280,5 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   const interrupted = JSON.parse(await readFile(join(first.workspace, "job.json"), "utf8"));
   interrupted.status = "RUNNING";
   await writeFile(join(first.workspace, "job.json"), JSON.stringify(interrupted));
-  assert.equal((await request(`/api/jobs/${third.id}/start`, approval)).status, 409, "durable unsettled job blocks restart execution");
+  assert.equal((await start(third.id)).status, 409, "durable unsettled job blocks restart execution");
 });

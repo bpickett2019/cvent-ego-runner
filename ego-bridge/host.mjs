@@ -84,7 +84,7 @@ export class SteelEgoHost {
     return target;
   }
 
-  async forbiddenUiLabel(envelope) {
+  async forbiddenUiLabel(envelope, pattern = FORBIDDEN) {
     let expression = null;
     if (envelope.method === "Input.dispatchMouseEvent" && Number.isFinite(envelope.params?.x) && Number.isFinite(envelope.params?.y)) {
       expression = `(() => { const e=document.elementFromPoint(${JSON.stringify(envelope.params.x)},${JSON.stringify(envelope.params.y)}); const a=e?.closest('button,a,[role=button],[role=menuitem],input'); return a ? [a.innerText,a.value,a.getAttribute('aria-label'),a.title].filter(Boolean).join(' ') : ''; })()`;
@@ -94,12 +94,12 @@ export class SteelEgoHost {
     if (expression) {
       const result = await this.client.request("Runtime.evaluate", { expression, returnByValue: true }, envelope.sessionId);
       const label = String(result.result?.value || "");
-      if (FORBIDDEN.test(label)) return label;
+      if (pattern.test(label)) return label;
     }
     if (envelope.method === "Runtime.callFunctionOn" && envelope.params?.objectId) {
       const result = await this.client.request("Runtime.callFunctionOn", { objectId: envelope.params.objectId, functionDeclaration: "function(){return [this.innerText,this.value,this.getAttribute?.('aria-label'),this.title].filter(Boolean).join(' ')}", returnByValue: true }, envelope.sessionId);
       const label = String(result.result?.value || "");
-      if (FORBIDDEN.test(label)) return label;
+      if (pattern.test(label)) return label;
     }
     return null;
   }

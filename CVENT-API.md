@@ -26,7 +26,7 @@ The production login-first flow provisions a clean browser at Start Build with n
 
 ## Pi tool usage
 
-First read and understand this job's actual RR locally. Then read this guide and run:
+Understand this job's RR locally. Consult only the relevant current operation contract below; historical live-test narratives are not execution instructions. Start with:
 
 ```sh
 "$CVENT_API_BIN" capabilities
@@ -66,6 +66,8 @@ Supported adapter operations:
 | `configureVolumeDiscount` | `{name, patch, discountId?, createIfMissing?, agendaItems?}`; same create-only lifecycle for named event volume rules; see volume contract below |
 
 The retained `(C+D)` guard is **not permission to rename an event or bypass the API through UI**. If that client refuses the target, report an integration/policy blocker. The failed live event PATCH route is disabled. An invalid preserved registration deadline/end-date combination blocks PUT before write intent; correcting scheduling requires separate explicit authorization. Client method availability is not a guarantee that every tenant exposes the same operations. A non-2xx response is not automatically an unsupported-capability determination.
+
+Fetch each needed complete catalog once, then compare all relevant RR rows locally with Python or `rr-evidence`; print source-referenced exceptions and relevant fields, not whole catalogs. Re-read live state when needed for freshness and saved verification; never skip the adapter's per-object identity, write-intent or readback guards. Group independent local comparisons, not uncertain writes. Identity matching alone is not satisfaction.
 
 Outputs are concise receipt pointers. Full API results and verification evidence are in `receipts/api-<uuid>.json`; inspect only relevant fields with the existing file/workbook tools rather than repeating expensive calls or dumping large responses into context. Mock tests do not certify live writes. Event-note and registration-type capacity write/restore tests pass. The custom-field endpoint accepted an unchanged-value PUT; changed-value custom-field persistence and full RR execution remain unvalidated. The API returns no ETag for this target: fresh baseline checks minimize, but cannot eliminate, the concurrent-edit window.
 
@@ -184,7 +186,7 @@ Never use UI to bypass missing credentials, 401/403, wrong identity, policy deni
 
 ## Stop, evidence and uncertainty
 
-The CLI writes a durable intent receipt and `api-write-uncertain.json` **before** a mutation, and clears the marker only after successful saved-result verification. Failure or process cancellation leaves it intact. The marker blocks further API writes and Ego UI mutations; read-only API reconciliation is still allowed. Legacy `api-current-event.json` evidence remains preserved; production event updates are now rejected and the approved event name is immutable.
+The CLI writes a durable intent receipt and `api-write-uncertain.json` **before** a mutation, and clears the marker only after successful saved-result verification. Failure or process cancellation leaves it intact. The job-local marker blocks further API writes and Ego UI mutations within that run; read-only API inspection is still allowed. A fresh upload does not inherit previous jobs' write markers or uncertainty. Historical evidence is not a recovery task or launch prerequisite. Legacy `api-current-event.json` evidence remains preserved; production event updates are now rejected and the approved event name is immutable.
 
 One API operation runs at a time per job using `api-operation.lock`. A lock left by an interrupted process is not stolen: the operator must verify the owned process is gone and reconcile the receipt before removing it. The tool has no blind HTTP write retries. Public errors remain generic; bounded, credential-redacted API validation details and request IDs are retained in failure receipts. OAuth response bodies and raw non-JSON errors are not retained.
 

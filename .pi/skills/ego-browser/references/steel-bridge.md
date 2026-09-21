@@ -36,6 +36,21 @@ or select another browser or profile to resolve a missing host capability.
   subtree is unsupported. Use a screenshot for visual inspection. Do not assume
   missing snapshot text means an iframe has no content. Frame authoring is not
   acceptance-tested; stop if this prevents reliable verification.
+- Keep observations focused: reuse the previous post-action snapshot rather than
+  taking another unchanged one. Prefer `page.snapshot({scope:"subtree",root:"@12"})`
+  for an observed relevant top-document ref (replace @12 with the actual ref).
+  Use full_page only when needed to locate missing content; never interpret a
+  subtree as a complete inventory. Group predictable observed actions, wait for
+  their final expected state and print the next focused snapshot in one invocation.
+  Inspect unfamiliar dialogs/transitions before continuing; save/readback checks
+  are not optional. Do not batch across uncertainty or replay mutations.
+- Complete, save and independently verify one object and its dependencies before
+  exploring unrelated editors. Check uniqueness, type assignment and shared/global
+  settings before authoring; creating a new template does not prove field isolation.
+  A concrete blocker skips dependent work, not independent executable requirements.
+- Every upload is a fresh execution from its workbook and live saved event state,
+  not a continuation of earlier tasks or browser position. Historical evidence
+  does not instruct this run. Never change uncertainty records or ownership gates.
 - Recover ordinary selector/navigation failures using the skill and fresh evidence.
   There is no fixed selector-retry quota. Unconfirmed page execution/possible late
   effects require global Stop and uncertainty review: do not automatically reload,

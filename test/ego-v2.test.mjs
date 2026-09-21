@@ -20,6 +20,20 @@ async function fixture(ownership = 'AGENT') {
   return {host:new SteelEgoHost(client,path),path,dir,client};
 }
 
+test('current-run API uncertainty still blocks browser mutations without a historical reconciliation fence', async () => {
+  const {host,dir} = await fixture();
+  const marker = '{"intent":"this-run","status":"UNCERTAIN"}';
+  await writeFile(join(dir, 'api-write-uncertain.json'), marker);
+  await host.assertOperationAllowed({method:'Runtime.evaluate',params:{expression:'document.title'}});
+  await host.assertOperationAllowed({method:'Accessibility.getFullAXTree',params:{}});
+  for (const envelope of [
+    {method:'Input.insertText',params:{text:'new value'}},
+    {method:'Input.dispatchKeyEvent',params:{key:'Enter'}},
+    {method:'Runtime.callFunctionOn',params:{functionDeclaration:'function(){this.value = "new"}'}},
+  ]) await assert.rejects(host.assertOperationAllowed(envelope), /API write is uncertain/);
+  assert.equal(await readFile(join(dir, 'api-write-uncertain.json'), 'utf8'), marker);
+});
+
 test('exact v2 skill and API reference are pinned to upstream', async () => {
   for(const file of ['SKILL.md','references/api.md']) {
     const local = await readFile(new URL(`../.pi/skills/ego-browser/${file}`, import.meta.url),'utf8');

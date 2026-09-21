@@ -25,6 +25,24 @@ function fixture(fetcher, { confirmResult = true, storage = new Map([['rrJobId',
 }
 const response = (path, record) => path === '/api/runtime' ? runtime : path.endsWith('/results/state.json') ? {} : record;
 
+test('an old startup rejection is displayed as retired, never as a current operator prerequisite', async () => {
+  const reason = 'Operator decision required before a new RR: inspect data/jobs/prior/unresolved-changes.json. Authorize separate read-only saved-state verification; repair or acceptance needs explicit approval. No AI started.';
+  const f = fixture(path => response(path, {id:'job',status:'STOPPED',phase:'SETTLED',stopReason:reason,piCostUSD:0,totalEventCostUSD:0}));
+  await turn(); assert.equal(f.get('stage').textContent, 'STOPPED');
+  assert.match(f.get('action').textContent, /retired startup rule.*Upload a new RR/);
+  assert.doesNotMatch(f.get('action').textContent, /Operator decision|unresolved-changes|Checking previous interrupted change/);
+  assert.match(f.get('cost').textContent, /\$0\.00 this run/);
+});
+
+test('budget reset display distinguishes current allowance from selected historical run cost', async () => {
+  const record = { id: 'job', status: 'INCOMPLETE', piCostUSD: 10.5, totalEventCostUSD: 49.8 };
+  const f = fixture(path => path === '/api/runtime' ? { ...runtime, budget: { resetId: 'reset', spentUSD: 0, allowanceUSD: 60, externalCostReserveUSD: 10 } } : response(path, record));
+  await turn();
+  assert.match(f.get('cost').textContent, /\$0\.00 used since reset/);
+  assert.match(f.get('cost').textContent, /\$60\.00 per-event allowance/);
+  assert.match(f.get('cost').textContent, /\$10\.50 historical selected run/);
+});
+
 test('Clear/New RR waits for confirmed cleanup, clears persisted selection and grid, and never starts AI',async()=>{
   const gate=deferred(),posts=[];
   const f=fixture((path,options)=>{if(options?.method){posts.push(path);return gate.promise;}return response(path,{id:'job',status:'RUNNING',phase:'EXECUTING'});});

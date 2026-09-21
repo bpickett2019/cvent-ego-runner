@@ -124,12 +124,16 @@ async function refresh() {
     const executing = active() && job.phase === "EXECUTING";
     const ended = job && ["STOPPED", "DONE", "INCOMPLETE"].includes(statusLabel(job.status));
     $("stage").textContent = executing ? "Executing RR" : active() ? progress.currentStage || job.phase : statusLabel(job?.status) || "UPLOAD";
-    $("action").textContent = ended ? `${job.stopReason || "Execution ended"}. ${job.status === "FINISHED" || job.status === "REVIEW_REQUIRED" ? "This historical run has no verified full-RR completion result." : job.executionSummary || "Saved execution results are available below."}`
+    const retiredStartupBlock = ended && job.stopReason?.startsWith("Operator decision required before a new RR:");
+    $("action").textContent = retiredStartupBlock ? "This build stopped before AI under a retired startup rule. Upload a new RR to start fresh."
+      : ended ? `${job.stopReason || "Execution ended"}. ${job.status === "FINISHED" || job.status === "REVIEW_REQUIRED" ? "This historical run has no verified full-RR completion result." : job.executionSummary || "Saved execution results are available below."}`
       : executing ? job.executionActivity ? `${job.executionActivity.at} · ${job.executionActivity.message}` : "Native Pi is working; saved results require separate verification."
       : job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
     $("agentReply").textContent = executing ? "" : job?.lastAssistantText || job?.intake?.summary || "";
     $("question").textContent = job?.lastAssistantText || "";
-    $("cost").textContent = job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending` : "No current run · prior spending retained";
+    $("cost").textContent = runtime.budget?.resetId && !active()
+      ? `${money(runtime.budget.spentUSD)} used since reset · ${money(runtime.budget.allowanceUSD)} per-event allowance (${money(runtime.budget.externalCostReserveUSD)} reserved)${job ? ` · ${money(job.piCostUSD)} historical selected run` : ""}`
+      : job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending` : "No current run · prior spending retained";
     $("results").hidden = !job; if (job) $("results").href = `/api/jobs/${job.id}/results/final-report.md`;
     const entries = Array.isArray(jobs) ? [...jobs] : [];
     if (job && !entries.some(item => item.id === job.id)) entries.unshift(job);

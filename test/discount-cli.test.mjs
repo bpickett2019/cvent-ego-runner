@@ -80,6 +80,17 @@ globalThis.fetch=async(input,init={})=>{
   const receipts = async () => Promise.all((await readdir(join(dir, "receipts"))).filter(f => f.endsWith(".json")).map(async f => JSON.parse(await readFile(join(dir, "receipts", f)))));
   return { dir, run, receipts };
 }
+test('current-run uncertain API writes still block mutation before network access and permit reads', async t => {
+  const f = await setup(t);
+  const marker = '{"status":"UNCERTAIN","intent":"this-run"}';
+  await writeFile(join(f.dir, 'api-write-uncertain.json'), marker);
+  const denied = await f.run(); assert.equal(denied.code, 1); assert.match(denied.stderr, /This run's API write is uncertain/);
+  assert.equal(existsSync(join(f.dir, 'requests.log')), false);
+  const read = await f.run('listDiscounts', {}); assert.equal(read.code, 0, read.stderr);
+  assert.equal(existsSync(join(f.dir, 'writes.log')), false);
+  assert.equal(await readFile(join(f.dir, 'api-write-uncertain.json'), 'utf8'), marker);
+});
+
 test("CLI advertises create-only production writes and explains prohibited update operations", async t => {
   const f = await setup(t), result = await f.run("capabilities");
   assert.equal(result.code, 0, result.stderr);
@@ -229,7 +240,7 @@ test("CLI keeps uncertainty, input and acknowledged ID after exhausted polling; 
   assert.equal(receipt.writeEvidence[0].discountId, discountId); assert.equal(receipt.writeEvidence.filter(e => e.phase === "READBACK").length, 7);
   assert.equal(existsSync(join(f.dir, "api-write-uncertain.json")), true);
   assert.equal(existsSync(join(f.dir, "api-discounts.json")), false);
-  const repeat = await f.run(); assert.equal(repeat.code, 1); assert.match(repeat.stderr, /Prior API write is uncertain/);
+  const repeat = await f.run(); assert.equal(repeat.code, 1); assert.match(repeat.stderr, /This run's API write is uncertain/);
   const read = await f.run("listDiscounts", {}); assert.equal(read.code, 0, read.stderr);
   assert.equal(existsSync(join(f.dir, "api-write-uncertain.json")), true);
   assert.equal(await readFile(join(f.dir, "writes.log"), "utf8"), "POST\n");

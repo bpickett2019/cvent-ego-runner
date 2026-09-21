@@ -47,7 +47,7 @@ test("workbook UI has no scope or budget inputs", async () => {
 test("one canonical task/SOW retains API and browser authorization boundaries", async () => {
   const prompt = await readFile(join(root, "app/runner-prompt.md"), "utf8");
   assert.equal(RUN_POLICY.approvedSow, prompt);
-  assert.ok(prompt.split(/\s+/).length < 375, "keep one plain task, not an execution framework");
+  assert.ok(prompt.split(/\s+/).length < 470, "keep one plain task, not an execution framework");
   assert.doesNotMatch(prompt, /\$\d|budget|spending|cost|allowanceUSD|reserveUSD/i, "no model-facing dollar target or budget coaching");
   for (const boundary of [
     '"$CVENT_API_BIN" first for supported operations',
@@ -70,6 +70,14 @@ test("one canonical task/SOW retains API and browser authorization boundaries", 
   const skill = await readFile(join(root, ".pi/skills/ego-browser/SKILL.md"));
   const upstream = await readFile(join(root, "vendor/ego-lite/skills/ego-browser/SKILL.md"));
   assert.deepEqual(skill, upstream, "pinned upstream skill remains unchanged");
+});
+
+test("Site Designer is last without prescribing the order of other permitted work", () => {
+  assert.match(RUN_POLICY.approvedSow, /Do Site Designer last, after completing and verifying other permitted work or recording concrete blockers; otherwise choose any order/);
+});
+
+test("Site Designer checkpoint offers use Continue, not Restore, within the current RR scope", () => {
+  assert.match(RUN_POLICY.approvedSow, /If Site Designer offers a previous save\/checkpoint, click Continue, not Restore; then optimize the current site according to this RR within the permitted scope/);
 });
 
 test("Pi owns the plan after reading the actual workbook, with no rigid workflow appendix", async () => {
@@ -134,7 +142,8 @@ test("execution envelope omits financial coaching while app limits remain enforc
   assert.equal(RUN_POLICY.allowanceUSD,60);
   assert.equal(RUN_POLICY.targetCostUSD,60);
   assert.equal(RUN_POLICY.externalCostReserveUSD,10);
-  assert.equal(envelope.priorEventEvidence,'receipts/prior-event-evidence.json');
+  assert.equal(envelope.priorEventEvidence,undefined);
+  assert.doesNotMatch(prompt, /prior-event-evidence|reconciliation/);
   assert.equal(envelope.approvedSow,undefined);
 });
 

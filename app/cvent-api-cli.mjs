@@ -34,7 +34,7 @@ async function main() {
   const discountOperation = volume || operation === "configureDiscount";
   const identityKey = volume ? "name" : "code";
   const discountStatePath = join(workspace, volume ? "api-volume-discounts.json" : "api-discounts.json");
-  if (existsSync(uncertainPath) && CAPABILITIES[operation] === "api-write") throw new ApiFailure("Prior API write is uncertain. Read authoritative state and request reconciliation; do not replay or use browser fallback");
+  if (existsSync(uncertainPath) && CAPABILITIES[operation] === "api-write") throw new ApiFailure("This run's API write is uncertain. Stop; do not replay or use browser fallback");
   const chunks = []; let bytes = 0;
   for await (const chunk of process.stdin) { bytes += chunk.length; if (bytes > 100_000) throw new ApiFailure("API input too large"); chunks.push(chunk); }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");

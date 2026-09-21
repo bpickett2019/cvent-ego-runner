@@ -7,35 +7,41 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mountRR } from '../app/rr-connection.mjs';
+import { resetRunBudget } from '../app/budget.mjs';
 import { provisionCleanBrowser, steelOrigin } from '../app/clean-browser.mjs';
 import { SteelEgoHost } from '../ego-bridge/host.mjs';
 import { transitionBrowser } from '../app/browser-ownership.mjs';
 
-async function fixture(t, { loginFirst = true, cleanupFails = false } = {}) {
+async function fixture(t, { cleanupFails = false, launchFails = false, promptFails = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'login-first-')); await mkdir(join(root, 'app'));
   await writeFile(join(root, 'app/runner-prompt.md'), 'Read incrementally; preserve existing items.');
   await mkdir(join(root, 'data/current'), {recursive:true});
   const sharedPath=join(root,'data/current/runtime.json');
   const shared=async()=>JSON.parse(await readFile(sharedPath,'utf8'));
   const saveShared=value=>writeFile(sharedPath,JSON.stringify(value));
-  const launches = [], browsers = [], posts = [], cleanups = [];
-  let deny = false, gate = async () => {}, provisionGate = async () => {}, sessionGate = async () => {}, mismatch = false;
+  const launches = [], browsers = [], posts = [], cleanups = [], fences = [];
+  let deny = false, gate = async () => {}, provisionGate = async () => {}, sessionGate = async () => {}, fenceGate = async () => {}, mismatch = false;
   class Rpc extends EventEmitter {
     constructor(workspace) { super(); this.workspace = workspace; this.id = randomUUID(); this.commands = []; }
     state() { return { sessionId: this.id, sessionFile: join(this.workspace, 'pi-sessions', this.id+'.jsonl'), messageCount: 0, isStreaming: false, isCompacting: false, pendingMessageCount: 0, model: { cost: { input: 1 } } }; }
     async freshSession() { await sessionGate(); return this.state(); }
-    async request(c) { this.commands.push(c); return { data: c.type === 'get_state' ? this.state() : c.type === 'get_session_stats' ? {cost:0} : { text: 'Report' } }; }
+    async request(c) { this.commands.push(c); if (promptFails && c.type === 'prompt') throw new Error('Prompt response uncertain'); return { data: c.type === 'get_state' ? this.state() : c.type === 'get_session_stats' ? {cost:0} : { text: 'Report' } }; }
     async stop(after) { await after(); return []; }
   }
   const app = express(); app.use(express.json());
   const connection = mountRR(app, {root,
+    fenceBrowser: async (_runtime, onFailure) => {
+      await fenceGate();
+      const fence = { enabled: true, releases: 0, healthy() { return this.enabled; }, async release() { this.releases++; this.enabled = false; }, closeAfterBrowserStopped() { this.enabled = false; }, fail() { this.enabled = false; onFailure(new Error('Fence disconnected')); } };
+      fences.push(fence); return fence;
+    },
     stopBrowser: async ({record}) => { cleanups.push(record.id); if(cleanupFails)throw new Error('Docker unavailable'); },
-    provisionBrowser: loginFirst ? async (record, cancelled) => {
+    provisionBrowser: async (record, cancelled) => {
       await provisionGate();
       if (cancelled()) throw new Error('Cancelled');
       const runtime = {runtimeId:record.id,jobId:record.id,freshProfile:true,ownership:'USER',identityVerified:true,steelSessionId:randomUUID(),activeTargetId:randomUUID()};
       await saveShared(runtime); browsers.push(runtime); return runtime;
-    } : undefined,
+    },
     prepareTarget: async (name, options) => {
       posts.push({name,options}); await gate();
       if (deny) throw new Error('Security or login not confirmed');
@@ -45,15 +51,88 @@ async function fixture(t, { loginFirst = true, cleanupFails = false } = {}) {
       return {target, runtime:{...runtime,...(mismatch ? {activeTargetId:'wrong'} : {})}};
     },
     verifyLogin: async () => ({...browsers.at(-1),ownership:'AGENT',apiPreflight:{eventId:'selected'}}),
-    rpcFactory: ({workspace}) => {const rpc=new Rpc(workspace);launches.push(rpc);return rpc;},
+    rpcFactory: ({workspace}) => {if (launchFails) throw new Error('Launch configuration unavailable'); const rpc=new Rpc(workspace);launches.push(rpc);return rpc;},
   });
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   t.after(async()=>{await connection.shutdown();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});});
   const request=async(path,body)=>{const r=await fetch(`http://127.0.0.1:${server.address().port}${path}`,body===undefined?{}:{method:'POST',...(body instanceof FormData?{body}:{headers:{'content-type':'application/json'},body:JSON.stringify(body)})});return {status:r.status,body:await r.json()};};
   const upload=async()=>{const form=new FormData();form.append('rr',new Blob(['immutable RR']),'RR.xlsx');form.append('eventName','User Target');return (await request('/api/jobs',form)).body;};
   const job=await upload();
-  return {root,job,launches,browsers,posts,cleanups,connection,request,upload,shared,saveShared,get:async()=> (await request(`/api/jobs/${job.id}`)).body,start:()=>request(`/api/jobs/${job.id}/read`,{}),back:()=>request(`/api/jobs/${job.id}/answer`,{message:'Return',returnControl:true}),deny:v=>deny=v,gate:fn=>gate=fn,provisionGate:fn=>provisionGate=fn,sessionGate:fn=>sessionGate=fn,mismatch:()=>mismatch=true};
+  return {root,job,launches,browsers,posts,cleanups,fences,connection,request,upload,shared,saveShared,get:async()=> (await request(`/api/jobs/${job.id}`)).body,start:()=>request(`/api/jobs/${job.id}/read`,{}),back:()=>request(`/api/jobs/${job.id}/answer`,{message:'Return',returnControl:true}),deny:v=>deny=v,gate:fn=>gate=fn,provisionGate:fn=>provisionGate=fn,sessionGate:fn=>sessionGate=fn,fenceGate:fn=>fenceGate=fn,mismatch:()=>mismatch=true};
 }
+test('login-first gates use explicit budget credits before browser startup and after verified Return', async t => {
+  const f = await fixture(t), jobsRoot = join(f.root, 'data/jobs'), priorPath = join(jobsRoot, 'prior');
+  await mkdir(priorPath);
+  const prior = { id: 'prior', status: 'INCOMPLETE', piCostUSD: 50, target: { evtstub: 'selected' } };
+  await writeFile(join(priorPath, 'job.json'), JSON.stringify(prior));
+  assert.equal((await f.start()).status, 409);
+  assert.equal(f.browsers.length, 0); assert.equal(f.launches.length, 0);
+  resetRunBudget(jobsRoot, 'User requested clearing run costs');
+  assert.equal((await f.start()).status, 200);
+  assert.equal(f.launches.length, 0, 'login still precedes any native session');
+  assert.equal((await f.get()).priorEventCostUSD, 0);
+  assert.equal((await f.back()).status, 200);
+  assert.equal(f.launches.length, 1);
+  assert.equal((await f.get()).totalEventCostUSD, 0);
+  assert.equal(JSON.parse(await readFile(join(priorPath, 'job.json'))).piCostUSD, 50);
+});
+test('historical browser and API uncertainty never blocks a fresh upload or becomes its task', async t => {
+  for (const uncertainty of ['{"changes":[{"object":"old footer","before":"original-url"}]}', '{"uncertainWrites":[{"object":"old footer"}]}', '[{"object":"old footer"}]', '{"changes":"malformed"}']) {
+    const f = await fixture(t), id = randomUUID(), dir = join(f.root, 'data/jobs', id);
+    await mkdir(dir);
+    const prior = JSON.stringify({ id, status: 'INCOMPLETE', piCostUSD: 1, target: { evtstub: 'selected' }, unresolvedChanges: ['old-tool'], apiUnresolved: { status: 'UNCERTAIN' } });
+    await writeFile(join(dir, 'job.json'), prior);
+    await writeFile(join(dir, 'unresolved-changes.json'), uncertainty);
+    await writeFile(join(dir, 'api-write-uncertain.json'), '{"oldIntent":true}');
+    await writeFile(join(f.root, 'data/reconciliations.json'), 'retired registry, not execution input');
+    await f.start(); const result = await f.back(), record = await f.get();
+    assert.equal(result.status, 200); assert.equal(result.body.aiStarted, true);
+    assert.equal(record.status, 'RUNNING'); assert.equal(record.phase, 'EXECUTING');
+    assert.equal(record.contextIsolation.initialMessageCount, 0); assert.equal(record.priorEventCostUSD, 1);
+    assert.equal(f.launches.length, 1); assert.equal(f.fences.length, 0);
+    const prompts = f.launches[0].commands.filter(c => c.type === 'prompt');
+    assert.equal(prompts.length, 1); assert.ok(prompts[0].message.includes(f.job.workbook));
+    assert.doesNotMatch(prompts[0].message, /old footer|old-tool|prior-event-evidence|Operator decision required/);
+    assert.equal(record.apiUnresolved, undefined); assert.deepEqual(record.unresolvedChanges, []);
+    await assert.rejects(readFile(join(f.job.workspace, 'api-write-uncertain.json')), /ENOENT/);
+    await assert.rejects(readFile(join(f.job.workspace, 'unresolved-changes.json')), /ENOENT/);
+    await f.connection.stop();
+    assert.equal((await f.shared()).ownership, 'USER'); assert.deepEqual(f.cleanups, [f.job.id]);
+    assert.equal((await f.back()).status, 409, 'settled jobs never resume');
+    assert.equal(await readFile(join(dir, 'api-write-uncertain.json'), 'utf8'), '{"oldIntent":true}');
+    assert.equal(await readFile(join(dir, 'job.json'), 'utf8'), prior);
+    assert.equal(await readFile(join(dir, 'unresolved-changes.json'), 'utf8'), uncertainty);
+    assert.equal(await readFile(join(f.root, 'data/reconciliations.json'), 'utf8'), 'retired registry, not execution input');
+    assert.equal(await readFile(f.job.workbook, 'utf8'), 'immutable RR');
+  }
+});
+test('historical plans stay evidence only: each permitted upload executes its own workbook in a distinct empty session', async t => {
+  const f = await fixture(t), id = randomUUID(), dir = join(f.root, 'data/jobs', id);
+  await mkdir(join(dir, 'reports'), { recursive: true });
+  const prior = JSON.stringify({ id, status: 'INCOMPLETE', piCostUSD: 1, target: { evtstub: 'selected' } });
+  const report = '{"unfinishedTask":"GO BACK TO OLD FOOTER","status":"INCOMPLETE"}';
+  await writeFile(join(dir, 'job.json'), prior);
+  await writeFile(join(dir, 'reports/final-report.json'), report);
+  await f.start(); await f.back(); const first = await f.get(); await f.connection.stop();
+  const next = await f.upload(); await f.request(`/api/jobs/${next.id}/read`, {});
+  await f.request(`/api/jobs/${next.id}/answer`, { message: 'Return', returnControl: true });
+  const second = (await f.request(`/api/jobs/${next.id}`)).body;
+  assert.notEqual(first.sessionId, second.sessionId); assert.equal(f.fences.length, 0);
+  for (const [index, record] of [first, second].entries()) {
+    assert.equal(record.phase, 'EXECUTING'); assert.equal(record.contextIsolation.initialMessageCount, 0);
+    assert.equal(record.priorEventCostUSD, 1); assert.equal(record.reconciliation, undefined);
+    const prompts = f.launches[index].commands.filter(c => c.type === 'prompt'); assert.equal(prompts.length, 1);
+    assert.ok(prompts[0].message.includes(record.workbook));
+    assert.doesNotMatch(prompts[0].message, /priorEventEvidence|prior-event-evidence|RECONCILING|rr-reconcile|GO BACK TO OLD FOOTER/);
+    assert.ok(!prompts[0].message.includes(id));
+    assert.match(prompts[0].message, /Start from this workbook and current live saved Cvent state/);
+    assert.match(prompts[0].message, /not instructions or a task queue/);
+    assert.equal(JSON.parse(await readFile(join(record.workspace, 'runtime.json'))).reconciliationPending, undefined);
+  }
+  assert.ok(!f.launches[1].commands.find(c => c.type === 'prompt').message.includes(first.workbook));
+  assert.equal(await readFile(join(dir, 'job.json'), 'utf8'), prior);
+  assert.equal(await readFile(join(dir, 'reports/final-report.json'), 'utf8'), report);
+});
 test('browser failure circuit breaker stops after three unresponsive errors despite successful intervening reads',async t=>{
   const f=await fixture(t);await f.start();await f.back();const rpc=f.launches[0];
   const fail=i=>rpc.emit('event',{type:'tool_execution_end',toolName:'bash',toolCallId:'bad-'+i,isError:true,result:{content:[{type:'text',text:'Error: snapshot: CDP request timed out: PRIVATE_LOCATOR'}]}});
@@ -72,7 +151,7 @@ test('ordinary selector failures stay recoverable without stopping or adding unc
   assert(!JSON.stringify(record).includes('PRIVATE_LOCATOR'));
   await f.connection.stop();assert.deepEqual((await f.get()).unresolvedChanges,[]);
 });
-test('unconfirmed page execution stops immediately and blocks a fresh run through retained uncertainty',async t=>{
+test('unconfirmed page execution stops its own run but does not transfer uncertainty to the next upload',async t=>{
   const f=await fixture(t);await f.start();await f.back();
   f.launches[0].emit('event',{type:'tool_execution_end',toolName:'bash',toolCallId:'late-page-execution',isError:true,result:{content:[{type:'text',text:'PageEvaluationTimeoutError: Execution could not be confirmed stopped; reload or close the Page before continuing.'}]}});
   for(let i=0;i<50&&(await f.get()).status!=='STOPPED';i++)await new Promise(r=>setTimeout(r,10));
@@ -80,15 +159,21 @@ test('unconfirmed page execution stops immediately and blocks a fresh run throug
   assert.equal((await f.shared()).ownership,'USER');assert.equal(record.browserFailureGuard.executionUncertain,true);
   const next=await f.upload();await f.request(`/api/jobs/${next.id}/read`,{});
   await f.request(`/api/jobs/${next.id}/answer`,{message:'Return',returnControl:true});
-  const blocked=(await f.request(`/api/jobs/${next.id}`)).body;assert.match(blocked.lastAssistantText,/uncertain/);assert.equal(f.launches.length,1);
+  const fresh=(await f.request(`/api/jobs/${next.id}`)).body;
+  assert.equal(fresh.phase,'EXECUTING');assert.equal(f.launches.length,2);
+  assert.notEqual(fresh.sessionId,record.sessionId);assert.deepEqual(fresh.unresolvedChanges,[]);
+  assert.equal(fresh.browserFailureGuard,undefined);assert.deepEqual((await f.get()).unresolvedChanges,['late-page-execution']);
 });
 
-test('New RR releases a legacy never-prompted prepared Pi session without replacing it',async t=>{
-  const f=await fixture(t,{loginFirst:false});assert.equal(f.launches.length,1);let stops=0;
-  f.launches[0].stop=async after=>{stops++;await after();return [];};
-  assert.equal((await f.request('/api/new-rr',{jobId:f.job.id})).status,200);
-  assert.equal(stops,1);assert.equal(f.launches.length,1);assert.equal((await f.get()).sessionPrepared,false);
-  assert.equal((await f.get()).status,'CLEARED');assert.equal(f.launches[0].commands.filter(c=>c.type==='prompt').length,0);
+test('legacy direct-start and continuation cannot launch Pi, before or after handoff',async t=>{
+  const f=await fixture(t);
+  for(const phase of ['uploaded','login','execution']) {
+    if(phase==='login') await f.start();
+    if(phase==='execution') await f.back();
+    for(const route of ['start','continue']) assert.equal((await f.request(`/api/jobs/${f.job.id}/${route}`,{})).status,409);
+    assert.equal(f.launches.length,phase==='execution'?1:0);
+  }
+  assert.equal(f.launches[0].commands.filter(c=>c.type==='prompt').length,1);
 });
 test('New RR clears an unstarted selection idempotently without Pi, browser creation or deleting its workbook',async t=>{
   const f=await fixture(t);
@@ -156,6 +241,20 @@ test('upload, browser startup, login wait and failed returns never launch or pol
   assert.equal((await f.request(`/api/jobs/${f.job.id}/rpc`,{type:'get_session_stats'})).status,409);
   assert.equal((await f.request(`/api/jobs/${f.job.id}/start`,{authorizedEventName:'User Target'})).status,409);
   assert.equal((await f.get()).waitingFor,'setup');
+});
+test('pre-process launch failure returns to human ownership without a prepared-session pool',async t=>{
+  const f=await fixture(t,{launchFails:true}); await f.start();
+  const result=await f.back(); assert.equal(result.body.aiStarted,false);
+  assert.equal(f.launches.length,0); assert.equal((await f.shared()).ownership,'USER');
+  assert.equal((await f.get()).status,'RUNNING'); assert.equal((await f.get()).waitingFor,'setup');
+  await f.connection.stop(); assert.deepEqual(f.cleanups,[f.job.id]);
+});
+test('uncertain prompt response stops Pi and Steel without an intake retry or second prompt',async t=>{
+  const f=await fixture(t,{promptFails:true}); await f.start();
+  assert.equal((await f.back()).status,409); assert.equal((await f.get()).status,'STOPPED');
+  assert.equal((await f.shared()).ownership,'USER'); assert.deepEqual(f.cleanups,[f.job.id]);
+  assert.equal((await f.back()).status,409); assert.equal(f.launches.length,1);
+  assert.equal(f.launches[0].commands.filter(c=>c.type==='prompt').length,1);
 });
 test('one explicit successful Return launches one fresh session with scoped incremental prompt',async t=>{
   const f=await fixture(t);await f.start();
@@ -233,12 +332,12 @@ test('Stop during browser provisioning remains zero AI and cannot publish a read
   assert.equal(f.launches.length,0);assert.equal(f.browsers.length,0);assert.equal((await f.get()).status,'STOPPED');
   assert.deepEqual(f.cleanups,[f.job.id]);
 });
-test('wrong assigned browser and previous write uncertainty block before any Pi launch',async t=>{
+test('wrong assigned browser blocks Pi even when historical API uncertainty no longer gates launch',async t=>{
   const f=await fixture(t);await f.start();f.mismatch();await f.back();assert.equal(f.launches.length,0);
   const id=randomUUID(),p=join(f.root,'data/jobs',id);await mkdir(p);
   await writeFile(join(p,'job.json'),JSON.stringify({id,status:'REVIEW_REQUIRED',target:{evtstub:'selected'},piCostUSD:2}));
-  await writeFile(join(p,'unresolved-changes.json'),'[{"verification":"UNVERIFIED"}]');
-  await f.back();assert.equal(f.launches.length,0);assert.match((await f.get()).lastAssistantText,/uncertain/);
+  await writeFile(join(p,'api-write-uncertain.json'),'{"verification":"UNVERIFIED"}');
+  await f.back();assert.equal(f.launches.length,0);assert.match((await f.get()).lastAssistantText,/assigned browser/);
 });
 test('stopped login-wait job cannot resume and next upload has no session reuse',async t=>{
   const f=await fixture(t);await f.start();await f.connection.stop();assert.equal((await f.back()).status,409);

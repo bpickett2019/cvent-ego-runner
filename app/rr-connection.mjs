@@ -9,6 +9,7 @@ import { publicEvent, activitySummary } from "./public-events.mjs";
 import { revokeJobBrowser } from "./browser-ownership.mjs";
 import { BrowserFailureGuard } from "./browser-failure-guard.mjs";
 import { stopJobBrowser } from "./clean-browser.mjs";
+import { budgetTotals } from "./budget.mjs";
 
 const read = path => JSON.parse(readFileSync(path, "utf8"));
 function save(path, value) {
@@ -76,11 +77,12 @@ export function resolveNamedEvent(expectedName, observed, previouslyVerified = n
   return { ...target, name };
 }
 
-export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, provisionBrowser, stopBrowser = stopJobBrowser, rpcFactory = options => new PiRpc(options) }) {
+export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowser, stopBrowser = stopJobBrowser, rpcFactory = options => new PiRpc(options) }) {
+  if (![verifyLogin, prepareTarget, provisionBrowser].every(fn => typeof fn === "function")) throw new Error("Login-first browser provisioning and verification are required");
   const jobsRoot = join(root, "data/jobs");
   mkdirSync(jobsRoot, { recursive: true, mode: 0o700 });
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
-  let active = null, prepared = null, busy = false, closing = false, controlEpoch = 0;
+  let active = null, busy = false, closing = false, controlEpoch = 0;
   const pathFor = id => {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("Invalid job ID");
     return join(jobsRoot, id);
@@ -137,7 +139,6 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
       failures.push(...revokeJobBrowser(root, job.record));
       try { await stopBrowser({ root, record: job.record }); }
       catch { failures.push("Steel browser cleanup requires reconciliation"); }
-      if (prepared === job) prepared = null;
       job.record.stopFailures = failures;
       job.record.sessionPrepared = false;
       job.record.finishedAt = new Date().toISOString();
@@ -150,7 +151,7 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
         ? "Done: the agent verified all RR-required website, registration and dependencies saved and connected, with the event still Draft."
         : job.record.status === "INCOMPLETE"
           ? "Incomplete: full RR configuration and Draft verification were not confirmed. Execution results retain completed work and remaining blockers."
-          : "Execution stopped. Submitted changes are not rolled back; unresolved execution or spending must be reconciled before another run.";
+          : "Execution stopped. Submitted changes are not rolled back. A new upload starts from its own RR and live saved state; process cleanup and spending checks still apply.";
       ledger(job);
       const statePath = join(job.workspace, "state.json");
       try {
@@ -169,39 +170,20 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
     })();
     return job.stopping;
   }
-  async function releasePrepared() {
-    if (!prepared) return;
-    const job = prepared;
-    if (job.releasing) return job.releasing;
-    job.releasing = (async () => {
-      const failures = await job.rpc.stop(async () => { await costs(job).catch(() => { job.record.spendingUnreconciled = true; }); });
-      job.record.sessionPrepared = false;
-      job.record.stopFailures = failures;
-      if (!failures.length) job.record.ownedPid = null;
-      ledger(job);
-      if (failures.length || job.record.spendingUnreconciled || job.record.piCostUSD !== 0) throw new Error("Idle session cleanup requires reconciliation");
-      if (prepared === job) prepared = null;
-    })();
-    return job.releasing;
-  }
-  async function prepareSession(record, existingJob = null) {
-    if (prepared?.record.id === record.id && !prepared.fault && !prepared.releasing) return prepared;
-    await releasePrepared(); // Only a never-prompted, zero-cost idle context is replaced.
+  async function prepareSession(job) {
+    const { record, workspace } = job;
+    if (job.rpc) throw new Error("This run already has a Pi process; no replacement or replay");
     assertProcessGone(record.ownedPid);
-    const workspace = record.workspace;
-    const frames = existsSync(join(workspace, "progress.jsonl")) ? readFileSync(join(workspace, "progress.jsonl"), "utf8").trim().split("\n").filter(Boolean) : [];
-    const job = existingJob || { workspace, record, clients: new Set(), tools: new Set(), seq: frames.length ? JSON.parse(frames.at(-1)).seq : 0 };
     record.status = "PREPARING";
     ledger(job);
-    save(join(workspace, "runtime.json"), { ownership: "USER" }); // Upload cannot author Cvent.
+    save(join(workspace, "runtime.json"), { ownership: "USER" }); // No tool access until launch verification completes.
     try {
       if (closing || job.stopping) throw new Error("Session preparation cancelled before process launch");
       job.rpc = rpcFactory({ cwd: root, workspace, env: { ...process.env, EGO_BROWSER_BIN: join(root, "bin/ego-browser"), CVENT_API_BIN: join(root, "bin/cvent-api"), CVENT_API_GUIDE: join(root, "CVENT-API.md") } });
-      prepared = job;
       record.ownedPid = job.rpc.child?.pid;
       ledger(job);
       job.rpc.on("fault", error => {
-        if (job.stopping || job.releasing) return;
+        if (job.stopping) return;
         job.fault = error.message;
         if (active === job) void stop(job, error.message);
       });
@@ -217,7 +199,7 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
             if (failure) {
               record.browserFailureGuard = failure;
               // Native process exit cannot prove that remote page execution ended.
-              // Retain conservative uncertainty so the next upload cannot replay it.
+              // Retain this run's uncertainty; stop it without replay or false DONE.
               if (failure.executionUncertain) job.tools.add(event.toolCallId || "browser-execution-uncertain");
               ledger(job);
               if (failure.tripped) void stop(job, failure.stopReason);
@@ -230,8 +212,8 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
       if (!session.sessionId || !session.sessionFile || session.messageCount !== 0 || realpathSync(dirname(resolve(session.sessionFile))) !== realpathSync(join(workspace, "pi-sessions"))) throw new Error("New upload requires an empty session in its own workspace");
       if (records().filter(j => j.id !== record.id).some(j => j.sessionId === session.sessionId || j.sessionFile === session.sessionFile || j.sessionPreparations?.some(s => s.sessionId === session.sessionId))) throw new Error("New upload cannot reuse another job's session");
       if (!session.model?.cost || !Object.values(session.model.cost).some(value => Number.isFinite(value) && value > 0)) throw new Error("Working model has no usable cost rates");
-      if (closing || job.fault || job.releasing || job.stopping) throw new Error("Session preparation interrupted");
-      Object.assign(record, { sessionId: session.sessionId, sessionFile: session.sessionFile, model: session.model, status: "UPLOADED", sessionMode: "fresh-on-upload", sessionPrepared: true });
+      if (closing || job.fault || job.stopping) throw new Error("Session preparation interrupted");
+      Object.assign(record, { sessionId: session.sessionId, sessionFile: session.sessionFile, model: session.model, sessionMode: "fresh-after-handoff", sessionPrepared: true });
       record.sessionPreparations = [...(record.sessionPreparations || []), { at: new Date().toISOString(), sessionId: session.sessionId }];
       record.contextIsolation = { verifiedAt: new Date().toISOString(), initialMessageCount: 0, initialCostUSD: 0, sessionId: session.sessionId };
       ledger(job);
@@ -240,7 +222,6 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
       if (!job.stopping) record.status = "PREPARATION_FAILED";
       record.lastStartError = error.message;
       ledger(job);
-      if (prepared === job && active !== job) await releasePrepared();
       throw error;
     }
   }
@@ -259,12 +240,11 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
     if (Object.keys(req.body || {}).some(key => key !== "jobId")) throw new Error("New RR accepts only the selected job identity");
     const id = req.body?.jobId;
     const selected = id ? read(join(pathFor(id), "job.json")) : null;
-    if ((active || prepared) && (active || prepared).record.id !== id) throw new Error("Another job owns this connection; select and Stop that job before clearing");
+    if (active && active.record.id !== id) throw new Error("Another job owns this connection; select and Stop that job before clearing");
     busy = true; controlEpoch++;
     try {
       let prior = selected;
       if (active) prior = await stop(active, "New RR requested by operator");
-      else if (prepared) { const idle = prepared; await releasePrepared(); prior = idle.record; }
       assertSettled(); // Never hide an interrupted durable job after a restart.
       if (prior) {
         assertProcessGone(prior.ownedPid);
@@ -299,75 +279,17 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
       const instruction = RUN_POLICY.instruction;
       const record = { id, workspace, workbook, instruction, requestedEventName, sourceWorkbook, originalName: basename(req.file.originalname), sha256: createHash("sha256").update(req.file.buffer).digest("hex"), status: "UPLOADED", createdAt: new Date().toISOString(), targetCostUSD: RUN_POLICY.targetCostUSD, piCostUSD: 0, unresolvedChanges: [], evidence: "receipts/", spendingUnreconciled: false };
       save(join(workspace, "job.json"), record);
-      save(join(workspace, "state.json"), { status: "UPLOADED", completed: [], pending: [], activity: [], currentStage: "Fresh Pi session", currentAction: "Ready to read your RR; no model prompt has been sent" });
-      if (provisionBrowser) {
-        record.workflow = "login-first"; record.sessionMode = "fresh-after-handoff";
-        save(join(workspace, "runtime.json"), { ownership: "USER" });
-        save(join(workspace, "state.json"), { status: "UPLOADED", completed: [], pending: [], activity: [], currentStage: "AI not started", currentAction: "Start Build opens a clean browser. No Pi process or model prompt before Return to Agent." });
-        save(join(workspace, "job.json"), record);
-      } else await prepareSession(record);
+      record.workflow = "login-first"; record.sessionMode = "fresh-after-handoff";
+      save(join(workspace, "runtime.json"), { ownership: "USER" });
+      save(join(workspace, "state.json"), { status: "UPLOADED", completed: [], pending: [], activity: [], currentStage: "AI not started", currentAction: "Start Build opens a clean browser. No Pi process or model prompt before Return to Agent." });
+      save(join(workspace, "job.json"), record);
       res.status(201).json(record);
     } finally { busy = false; }
   }));
   app.get("/api/jobs", route(async (_req, res) => res.json(records().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).map(({ id, originalName, requestedEventName, createdAt, status }) => ({ id, originalName, requestedEventName, createdAt, status })))));
   app.get("/api/jobs/:id", route(async (req, res) => res.json(read(join(pathFor(req.params.id), "job.json")))));
   app.post("/api/jobs/:id/continue", route(async () => { throw new Error("Old-session continuation is disabled. Upload the RR to start a fresh run; saved event evidence and spending are retained."); }));
-  app.post("/api/jobs/:id/start", route(async (req, res) => {
-    if (provisionBrowser) throw new Error("Use Start Build and the login-first handoff; legacy paid start is disabled");
-    if (closing || busy || active) throw new Error("Connection closing or another job active; never reset it");
-    assertSettled();
-    busy = true;
-    let job, record;
-    const approvedEpoch = controlEpoch;
-    try {
-      const workspace = pathFor(req.params.id);
-      record = read(join(workspace, "job.json"));
-      if (record.status !== "UPLOADED") throw new Error("Job already attempted; upload the RR for a fresh run");
-      if (!req.body || Object.keys(req.body).some(key => key !== "authorizedEventName")) throw new Error("Start accepts only the confirmed event name; scope and spending policy are managed by the runner");
-      if (createHash("sha256").update(readFileSync(record.workbook)).digest("hex") !== record.sha256) throw new Error("Original workbook changed");
-      if (record.spendingUnreconciled || record.piCostUSD !== 0 || record.stopFailures?.length) throw new Error("Unstarted session needs spending/process reconciliation");
-      const name = eventName(req.body.authorizedEventName);
-      if (record.requestedEventName && name !== record.requestedEventName) throw new Error("Target is bound to the upload; upload again to select a different event");
-      const target = await resolveTarget(name);
-      if (target.name !== name || eventTarget(target.url).evtstub !== target.evtstub) throw new Error("Resolved event identity differs from approval");
-      const history = eventHistory(jobsRoot, record.id, target, RUN_POLICY);
-      const runtime = await verifyLogin(target);
-      if (!runtime.identityVerified || runtime.ownership !== "AGENT") throw new Error("Verified assigned browser and returned control required");
-      if (!target.apiEventId || runtime.apiPreflight?.eventId !== target.apiEventId) throw new Error("Verified Cvent API access to the approved event is required before paid execution");
-      // Legacy/unstarted uploads after restart get a new EMPTY context, never an old conversation.
-      job = await prepareSession(record);
-      record = job.record;
-      const session = (await job.rpc.request({ type: "get_state" })).data;
-      const stats = (await job.rpc.request({ type: "get_session_stats" })).data;
-      if (job.fault || session.sessionId !== record.sessionId || session.sessionFile !== record.sessionFile || session.isStreaming !== false || session.isCompacting !== false || session.pendingMessageCount !== 0 || session.messageCount !== 0 || stats.cost !== 0) throw new Error("Upload session is no longer empty and idle; no prompt sent");
-      if (closing || approvedEpoch !== controlEpoch) throw new Error("Execution cancelled during preflight");
-      Object.assign(record, { approvedSow: RUN_POLICY.approvedSow, allowanceUSD: history.allowanceUSD, externalCostReserveUSD: history.externalCostReserveUSD, priorEventCostUSD: history.priorEventCostUSD, totalEventCostUSD: history.priorEventCostUSD, priorEventJobs: history.evidence, authorizedEventName: name, target, apiPreflight: runtime.apiPreflight, executionPolicy: RUN_POLICY.executionPolicy, status: "STARTING", startedAt: new Date().toISOString(), lastStartError: null });
-      save(join(workspace, "runtime.json"), { ...runtime, expectedEvtstub: target.evtstub, targetEventUrl: target.url });
-      save(join(workspace, "state.json"), { status: "RUNNING", completed: [], pending: [], activity: [], currentStage: "Read RR first", currentAction: "Pi will understand the uploaded workbook before choosing Cvent actions" });
-      writeFileSync(join(workspace, "approved-sow.md"), record.approvedSow, { mode: 0o400, flag: "wx" });
-      save(join(workspace, "receipts/prior-event-evidence.json"), history);
-      active = job; prepared = null;
-      ledger(job);
-      const message = executionPrompt(record, workspace);
-      if (job.stopping) throw new Error("Start cancelled by Stop");
-      record.status = "RUNNING"; ledger(job);
-      await job.rpc.request({ type: "prompt", message });
-      if (!job.stopping && !job.settling && record.status === "RUNNING") job.timer = setInterval(() => { void costs(job).then(() => {
-        if (record.totalEventCostUSD >= record.allowanceUSD - record.externalCostReserveUSD) return stop(job, "Cumulative spending threshold reached for the under-$60 goal");
-      }).catch(error => stop(job, error.message)); }, 2000);
-      res.json({ started: true, id: record.id, sessionId: record.sessionId });
-    } catch (error) {
-      if (job && active === job) await stop(job, error.message);
-      if (record) {
-        // Keep pre-launch errors visible across polling/reloads, without pretending a run started.
-        const latest = read(join(record.workspace, "job.json"));
-        latest.lastStartError = error.message;
-        save(join(record.workspace, "job.json"), latest);
-        if (prepared?.record.id === latest.id) prepared.record.lastStartError = error.message;
-      }
-      throw error;
-    } finally { busy = false; }
-  }));
+  app.post("/api/jobs/:id/start", route(async () => { throw new Error("Use Start Build and the login-first handoff; legacy paid start is disabled"); }));
   // Production login-first path: no native process exists during human login.
   async function startBrowserOnly(req, res) {
     if (closing || busy || active) throw new Error("Finish or Stop the active job first");
@@ -379,14 +301,15 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
     const prior = records().filter(r => r.id !== record.id);
     if (prior.some(r => r.spendingUnreconciled || !Number.isFinite(r.piCostUSD) || r.piCostUSD < 0)) throw new Error("Prior spending requires reconciliation");
     Object.assign(record, { approvedSow: RUN_POLICY.approvedSow, allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD,
-      priorEventCostUSD: prior.reduce((n, r) => n + r.piCostUSD, 0), executionPolicy: RUN_POLICY.executionPolicy,
+      priorEventCostUSD: budgetTotals(jobsRoot, prior).spentUSD, executionPolicy: RUN_POLICY.executionPolicy,
       status: "RUNNING", phase: "BROWSER_STARTING", startedAt: new Date().toISOString() });
     record.totalEventCostUSD = record.priorEventCostUSD;
     if (record.totalEventCostUSD >= record.allowanceUSD - record.externalCostReserveUSD) throw new Error("Cumulative spending threshold reached");
     const job = { workspace: record.workspace, record, clients: new Set(), tools: new Set(), seq: 0 };
-    active = job; busy = true; ledger(job);
-    writeFileSync(join(job.workspace, "approved-sow.md"), record.approvedSow, { mode: 0o400, flag: "wx" });
+    active = job; busy = true;
     try {
+      ledger(job);
+      writeFileSync(join(job.workspace, "approved-sow.md"), record.approvedSow, { mode: 0o400, flag: "wx" });
       job.browserStarting = Promise.resolve().then(() => provisionBrowser(record, () => closing || !!job.stopping || active !== job));
       const runtime = await job.browserStarting;
       if (job.stopping || closing || active !== job) throw new Error("Browser startup cancelled; no AI started");
@@ -419,12 +342,11 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
           runtime.ownership !== "AGENT" || !runtime.identityVerified || runtime.apiPreflight?.eventId !== target.apiEventId ||
           runtime.steelSessionId !== record.browser.steelSessionId || runtime.activeTargetId !== record.browser.activeTargetId || runtime.runtimeId !== record.browser.runtimeId) throw new Error("Verified assigned browser/target required before AI launch");
       // Launch only now. Keep the same job object so Stop/fault/settlement owns it.
-      await prepareSession(record, job);
+      await prepareSession(job);
       if (cancelled()) throw new Error("Handoff cancelled before prompt");
       const verified = await verifyLogin(target);
       if (cancelled() || verified.ownership !== "AGENT" || !verified.identityVerified || verified.apiPreflight?.eventId !== target.apiEventId ||
           verified.runtimeId !== runtime.runtimeId || verified.steelSessionId !== runtime.steelSessionId || verified.activeTargetId !== runtime.activeTargetId) throw new Error("Browser changed while preparing AI; no prompt sent");
-      prepared = null;
       Object.assign(record, { status: "RUNNING", phase: "EXECUTING", waitingFor: null, lastAssistantText: null, lastStartError: null, aiStartedAt: new Date().toISOString(), sessionMode: "fresh-after-handoff",
         target, authorizedEventName: target.name, apiPreflight: runtime.apiPreflight, allowanceUSD: history.allowanceUSD, externalCostReserveUSD: history.externalCostReserveUSD,
         priorEventCostUSD: history.priorEventCostUSD, totalEventCostUSD: history.priorEventCostUSD, priorEventJobs: history.evidence });
@@ -441,22 +363,8 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
       waiting(job, "setup", error.message); res.json({ accepted: true, aiStarted: false });
     } finally { busy = false; }
   }
-  // One native session: local RR reading, any human clarification, then the
-  // existing authoring path. No workbook parser, secondary agent or restoration.
-  function boundedText(value) {
-    if (typeof value !== "string" || !value.trim() || value.length > 10_000 || value.trimStart().startsWith("/")) throw new Error("Enter a bounded plain-text instruction");
-    return value.trim();
-  }
   function originalUnchanged(record) {
     if (createHash("sha256").update(readFileSync(record.workbook)).digest("hex") !== record.sha256) throw new Error("Original workbook changed");
-  }
-  async function sameIdleSession(job) {
-    const state = (await job.rpc.request({ type: "get_state" })).data;
-    if (job.fault || job.stopping || state.sessionId !== job.record.sessionId || state.sessionFile !== job.record.sessionFile || state.isStreaming !== false || state.isCompacting !== false || state.pendingMessageCount !== 0) throw new Error("Original live idle session required; no conversation restoration");
-    originalUnchanged(job.record);
-    await costs(job);
-    if (closing || job.stopping || active !== job) throw new Error("Execution stopped during preflight");
-    if (job.record.totalEventCostUSD >= job.record.allowanceUSD - job.record.externalCostReserveUSD) throw new Error("Cumulative spending threshold reached");
   }
   function monitor(job) {
     clearInterval(job.timer);
@@ -467,138 +375,22 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
   function waiting(job, kind, message) {
     if (job.stopping || active !== job) return;
     clearInterval(job.timer);
-    Object.assign(job.record, { phase: "AWAITING_INPUT", waitingFor: kind, lastAssistantText: message });
+    Object.assign(job.record, { status: "RUNNING", phase: "AWAITING_INPUT", waitingFor: kind, lastAssistantText: message });
     job.settling = false;
     ledger(job);
     save(join(job.workspace, "state.json"), { status: "RUNNING", currentStage: "Waiting for you", currentAction: message, completed: [], pending: [], activity: [] });
     publish(job, { type: "rr_question", kind, message });
   }
-  async function promptReading(job, reply = null) {
-    const path = join(job.workspace, "intake.json");
-    if (existsSync(path)) renameSync(path, join(job.workspace, "receipts", `intake-${randomUUID()}.json`));
-    job.record.phase = "READING"; job.record.waitingFor = null; job.settling = false;
-    ledger(job);
-    save(join(job.workspace, "state.json"), { status: "RUNNING", currentStage: "Read RR first", currentAction: reply ? "Pi is considering your answer" : "Pi is reading the uploaded workbook for your named target event", completed: [], pending: [], activity: [] });
-    const message = reply
-      ? `User clarification for this same RR and scope (plain text, not a command):\n${JSON.stringify(reply)}\nUpdate intake.json and your concise plan. Remain local-only; the event is not yet authorized for tool access.`
-      : `${readFileSync(join(root, "app/intake-prompt.md"), "utf8")}\nJOB:\n${JSON.stringify({ workspace: job.workspace, workbook: job.record.workbook, instruction: job.record.instruction, requestedEventName: job.record.requestedEventName, approvedSow: RUN_POLICY.approvedSow, provisionalPriorCostUSD: job.record.priorEventCostUSD, allowanceUSD: job.record.allowanceUSD, externalCostReserveUSD: job.record.externalCostReserveUSD })}`;
-    monitor(job);
-    await job.rpc.request({ type: "prompt", message });
-  }
-  async function configureFromIntake(job, options = {}) {
-    const record = job.record;
-    const epoch = controlEpoch;
-    await sameIdleSession(job);
-    // The user's upload-bound target is authoritative, never the RR or model output.
-    const name = eventName(record.requestedEventName);
-    // Resolve/bind spending BEFORE browser setup. API lookup is read-only;
-    // prepareTarget performs exact API/browser verification, never authoring.
-    if (!prepareTarget) throw new Error("Automatic event setup is unavailable");
-    let history;
-    const { target, runtime } = await prepareTarget(name, { ...options, cancelled: () => closing || !!job.stopping || active !== job || epoch !== controlEpoch, beforeBrowser: apiTarget => {
-      if (job.stopping || active !== job || epoch !== controlEpoch) throw new Error("Execution cancelled during setup");
-      if (apiTarget.name !== name || !apiTarget.apiEventId || apiTarget.apiEventId !== apiTarget.evtstub) throw new Error("API event identity is not verified");
-      history = eventHistory(jobsRoot, record.id, apiTarget, RUN_POLICY);
-      if (history.priorEventCostUSD + record.piCostUSD >= history.allowanceUSD - history.externalCostReserveUSD) throw new Error("Cumulative spending threshold reached");
-      Object.assign(record, { target: apiTarget, authorizedEventName: name, priorEventCostUSD: history.priorEventCostUSD, totalEventCostUSD: history.priorEventCostUSD + record.piCostUSD });
-      ledger(job);
-    } });
-    if (job.stopping || active !== job || epoch !== controlEpoch) throw new Error("Execution cancelled during setup");
-    if (target.name !== name || eventTarget(target.url).evtstub !== target.evtstub || target.apiEventId !== target.evtstub || !runtime.identityVerified || runtime.ownership !== "AGENT" || runtime.apiPreflight?.eventId !== target.apiEventId) throw new Error("API/browser event identity is not verified");
-    if (!history || record.target?.apiEventId !== target.apiEventId) throw new Error("History must be reconciled before browser setup");
-    Object.assign(record, { target, authorizedEventName: name, apiPreflight: runtime.apiPreflight, priorEventCostUSD: history.priorEventCostUSD, totalEventCostUSD: history.priorEventCostUSD + record.piCostUSD, priorEventJobs: history.evidence, allowanceUSD: history.allowanceUSD, externalCostReserveUSD: history.externalCostReserveUSD });
-    ledger(job);
-    await sameIdleSession(job);
-    if (job.stopping || epoch !== controlEpoch) throw new Error("Execution cancelled during setup");
-    save(join(job.workspace, "receipts/prior-event-evidence.json"), history);
-    save(join(job.workspace, "runtime.json"), { ...runtime, expectedEvtstub: target.evtstub, targetEventUrl: target.url });
-    record.phase = "EXECUTING"; record.waitingFor = null; record.lastAssistantText = null; job.settling = false;
-    ledger(job);
-    save(join(job.workspace, "state.json"), { status: "RUNNING", currentStage: "Configure and verify", currentAction: "API first; Ego for documented gaps", completed: ["workbook-analysis", "target-verified"], pending: [], activity: [] });
-    monitor(job);
-    await job.rpc.request({ type: "prompt", message: `${executionPrompt(record, job.workspace)}\nContinue from this same job's completed RR reading and clarifications; do not restart analysis unnecessarily.` });
-  }
-  app.post("/api/jobs/:id/read", route(async (req, res) => {
-    if (provisionBrowser) return startBrowserOnly(req, res);
-    if (closing || busy || active) throw new Error("Finish or Stop the active job first");
-    assertSettled();
-    if (Object.keys(req.body || {}).length) throw new Error("Read uses the instruction saved with this upload");
-    busy = true;
-    let job;
-    try {
-      const record = read(join(pathFor(req.params.id), "job.json"));
-      if (record.status !== "UPLOADED" || record.piCostUSD !== 0 || record.spendingUnreconciled || record.stopFailures?.length) throw new Error("A fresh unexecuted upload is required");
-      eventName(record.requestedEventName); // Old unbound uploads need a fresh explicitly targeted upload.
-      originalUnchanged(record);
-      // Until API identity verifies the named target, use the conservative total of all prior
-      // jobs. Failed pre-target reading remains charged, not lost on re-upload.
-      const prior = records().filter(r => r.id !== record.id);
-      if (prior.some(r => r.spendingUnreconciled || !Number.isFinite(r.piCostUSD) || r.piCostUSD < 0)) throw new Error("Prior spending requires reconciliation");
-      const priorCost = prior.reduce((n, r) => n + r.piCostUSD, 0);
-      const allowance = Math.min(RUN_POLICY.allowanceUSD, ...prior.map(r => r.allowanceUSD ?? RUN_POLICY.allowanceUSD));
-      const reserve = Math.max(RUN_POLICY.externalCostReserveUSD, ...prior.map(r => r.externalCostReserveUSD ?? 0));
-      if (priorCost >= allowance - reserve) throw new Error("Cumulative spending threshold reached before reading");
-      const epoch = controlEpoch;
-      job = await prepareSession(record);
-      const session = (await job.rpc.request({ type: "get_state" })).data;
-      const stats = (await job.rpc.request({ type: "get_session_stats" })).data;
-      if (job.fault || closing || epoch !== controlEpoch || session.sessionId !== record.sessionId || session.sessionFile !== record.sessionFile || session.isStreaming !== false || session.isCompacting !== false || session.pendingMessageCount !== 0 || session.messageCount !== 0 || stats.cost !== 0) throw new Error("Fresh empty idle session required; no prompt sent");
-      Object.assign(job.record, { workflow: "rr-first", intakeOnly: true, instruction: record.instruction || RUN_POLICY.instruction, approvedSow: RUN_POLICY.approvedSow, allowanceUSD: allowance, externalCostReserveUSD: reserve, priorEventCostUSD: priorCost, totalEventCostUSD: priorCost, executionPolicy: RUN_POLICY.executionPolicy, status: "RUNNING", startedAt: new Date().toISOString(), lastStartError: null });
-      writeFileSync(join(job.workspace, "approved-sow.md"), job.record.approvedSow, { mode: 0o400, flag: "wx" });
-      active = job; prepared = null;
-      ledger(job);
-      await promptReading(job);
-      res.json({ started: true, id: record.id, sessionId: record.sessionId });
-    } catch (error) {
-      if (active === job && job) await stop(job, error.message);
-      throw error;
-    } finally { busy = false; }
-  }));
+  // Keep the dashboard's endpoint names; there is only one execution path.
+  app.post("/api/jobs/:id/read", route(startBrowserOnly));
   app.post("/api/jobs/:id/answer", route(async (req, res) => {
     const job = requireActive(req);
-    if (busy || job.stopping || job.record.phase !== "AWAITING_INPUT") throw new Error("No live clarification is waiting; stopped jobs cannot resume");
+    if (busy || job.stopping || job.rpc || job.record.phase !== "AWAITING_INPUT") throw new Error("No login handoff is waiting; stopped jobs cannot resume");
     if (Object.keys(req.body || {}).some(key => !["message", "returnControl", "sessionInvalidated"].includes(key))) throw new Error("Unknown answer field");
-    const reply = boundedText(req.body?.message);
-    if (job.record.workflow === "login-first" && !job.rpc) return returnBeforeAI(job, req, res);
-    busy = true;
-    try {
-      await sameIdleSession(job);
-      if (job.record.waitingFor === "clarification") {
-        (job.record.clarifications ??= []).push(reply);
-        await promptReading(job, reply);
-      } else {
-        job.record.phase = "SETUP"; ledger(job);
-        try { await configureFromIntake(job, { returnControl: req.body.returnControl === true, sessionInvalidated: req.body.sessionInvalidated === true }); }
-        catch (error) {
-          if (job.record.phase === "EXECUTING") throw error; // Never replay an uncertain prompt.
-          waiting(job, "setup", error.message);
-        }
-      }
-      res.json({ accepted: true });
-    } catch (error) { await stop(job, error.message); throw error; }
-    finally { busy = false; }
+    // message is a legacy UI label, never a prompt or execution instruction.
+    return returnBeforeAI(job, req, res);
   }));
-  async function settleIntake(job) {
-    if (job.settling) return;
-    job.settling = true; clearInterval(job.timer);
-    await sameIdleSession(job);
-    const raw = readFileSync(join(job.workspace, "intake.json"), "utf8");
-    if (raw.length > 20_000) throw new Error("RR intake summary is too large");
-    const intake = JSON.parse(raw);
-    if (!intake || typeof intake.summary !== "string" || !intake.summary.trim() || !Array.isArray(intake.questions) || intake.questions.length > 20 || !intake.questions.every(q => typeof q === "string" && q.trim() && q.length <= 2000) || !(intake.eventName === null || typeof intake.eventName === "string")) throw new Error("Pi intake is incomplete; no Cvent execution permitted");
-    job.record.intake = intake;
-    job.record.lastAssistantText = intake.summary;
-    ledger(job);
-    if (intake.questions.length) return waiting(job, "clarification", [intake.summary, ...intake.questions].join("\n\n"));
-    job.record.phase = "SETUP"; ledger(job);
-    try { await configureFromIntake(job); }
-    catch (error) {
-      if (job.record.phase === "EXECUTING") throw error;
-      waiting(job, "setup", error.message);
-    }
-  }
   async function settle(job) {
-    if (job.record.workflow === "rr-first" && job.record.phase === "READING") return settleIntake(job);
     if (job.settling) return;
     job.settling = true; clearInterval(job.timer);
     await costs(job);
@@ -645,8 +437,9 @@ export function mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, 
     res.set("Cache-Control", "no-store").sendFile(file);
   }));
   return {
+    budget: () => ({ ...budgetTotals(jobsRoot, records()), allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD }),
     isBusy: () => busy || !!active,
     stop: () => { controlEpoch++; return active ? stop(active, "Control returned to operator") : Promise.resolve(); },
-    shutdown: async () => { closing = true; if (active) await stop(active, "Connection shutting down"); await releasePrepared(); },
+    shutdown: async () => { closing = true; if (active) await stop(active, "Connection shutting down"); },
   };
 }

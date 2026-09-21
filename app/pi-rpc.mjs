@@ -50,7 +50,7 @@ export class PiRpc extends EventEmitter {
     this.child.on("error", error => this.fail(error));
     this.child.on("exit", (code, signal) => {
       this.closed = true;
-      this.fail(new Error(`Pi exited (${code ?? signal}); reconcile uncertain writes before retry`));
+      this.fail(new Error(`Pi exited (${code ?? signal}); this run stopped, do not replay uncertain commands`));
       this.emit("exit", { code, signal });
     });
   }
@@ -81,15 +81,6 @@ export class PiRpc extends EventEmitter {
     const stats = (await this.request({ type: "get_session_stats" })).data;
     if (stats?.cost !== 0) throw new Error("Fresh session has prior or unavailable spending; refusing context reuse");
     return next;
-  }
-  async resumeSession(sessionFile, sessionId) {
-    const idle = state => state?.isStreaming === false && state?.isCompacting === false && state?.pendingMessageCount === 0;
-    if (!idle((await this.request({ type: "get_state" })).data)) throw new Error("Pi is not idle; refusing session switch");
-    const response = await this.request({ type: "switch_session", sessionPath: sessionFile });
-    if (response.data?.cancelled !== false) throw new Error("Session continuation was not confirmed");
-    const state = (await this.request({ type: "get_state" })).data;
-    if (!idle(state) || state.sessionId !== sessionId || state.sessionFile !== sessionFile) throw new Error("Original idle session not confirmed");
-    return state;
   }
   async stop(afterAbort = async () => {}) {
     const failures = [];

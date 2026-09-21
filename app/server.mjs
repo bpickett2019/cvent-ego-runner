@@ -119,7 +119,7 @@ async function provisionBrowser(record, cancelled) {
   await updateState({ status: "LOGIN_REQUIRED", currentAction: "Clean browser ready; human login required. AI not started." });
   return readJson(runtimePath);
 }
-const connection = mountRR(app, { root, resolveTarget, verifyLogin, prepareTarget, provisionBrowser });
+const connection = mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowser });
 mountWorkbooks(app, { root, isBusy: () => connection.isBusy() });
 app.get("/api/state", async (_req, res) => res.json(await readJson(statePath)));
 async function browserStopped(runtime) {
@@ -130,7 +130,7 @@ async function browserStopped(runtime) {
 app.get("/api/runtime", async (_req, res) => {
   const runtime = await readJson(runtimePath);
   const { runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent } = runtime;
-  res.json({ loginFirst: true, browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
+  res.json({ loginFirst: true, budget: connection.budget(), browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
 });
 async function selectTarget(name) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
