@@ -1,6 +1,119 @@
 # Azure three-instance deployment preparation
 
-## Published restricted staging preview — CURRENT (2026-09-21)
+## Staging AI enabled — CURRENT (2026-09-21 21:29 UTC)
+
+**Activated** https://staging.app-chartsdarts-dashboard.com/ on explicit user request.
+All three workspaces load team Claude Sonnet 5 (`claude-sonnet-5`) and Cvent API
+configuration, with `executionEnabled:true`. One paid build at a time across all
+workspaces. No automatic build, native session, model spend or Cvent authoring.
+Users upload a real RR, Start Build, sign in manually and Return to Agent.
+Full saved/unpublished-Draft RR acceptance remains unproven.
+
+`activate-ai.py` performed an exact-old-hash, one-time source/config upgrade with
+private intents/backups. Gateway stopped during backend activation; only verified
+synthetic previews were stopped through their controllers. Profiles/evidence
+retained; 14 post-cleanup non-profile data files per host byte-preserved. Current
+backend PIDs16030/15557/15570, USER/browser stopped/$0. Actual process credentials
+and model checked without exposing values. Source overlay hashes in receipts;
+the earlier archive/source-manifest describes the prior baseline, not this overlay.
+Gateway now loads both modules, durable slot env and narrow systemd writable path.
+
+Local app4846→80045 now rejects new AI503 while dashboard8788 remains available;
+1,113 protected files and $103.476558 unchanged. Interactive local previews remain
+running unchanged with fail-closed native launchers. Local disablement evidence:
+`logs/local-ai-disable-t2h3eplw/receipt.json`.
+
+Caddy/Basic unchanged, real anonymous TLS401 checks pass, cloud external listeners
+SSH22 only, legacy service inactive. Live legacy/bypass/unowned RPC denials pass;
+production slot empty. Shared Basic login is not per-user authorization. Access
+expires **2026-10-05T21:49:22.218610+00:00**, following the user's explicit
+14-day request (counted from September21 21:49 UTC). Only gateway expiry config
+changed and gateway restarted. Loaded expiry, unchanged Caddy/login/source/slot
+and backend runtime/jobs verified; anonymous HTTPS401 reverified. Receipt:
+`logs/ai-go-live/access-14d-renewal-receipt.json`. Never replay the private
+`extend-access-14d-once.py` or clear remote renewal backups/intent at
+`/var/lib/cvent-ego-access-renewal-20260921-14d/`. No automatic further extension.
+Authenticated rendered cloud UI/input and full RR acceptance are not newly claimed.
+
+Evidence `logs/ai-go-live/`: activation-dispatch.log, gateway-ai-live-receipt.json,
+per-host final-security logs and public-auth-verification.json. Runtime360-test
+results reused unchanged; deployment27 tests pass. Source remains uncommitted.
+Never replay private disable-local-once.py / activate-staging-once.py or clear
+local/remote intents. Remote backups: `/var/lib/cvent-ego-ai-activation/` on all
+four hosts. Durable gateway claim directory:
+`/var/lib/cvent-ego-gateway/execution-slot/`. Claims never expire automatically;
+release requires positive process/browser/spending/uncertainty clearance. Do not
+clear a claim after a crash or uncertain write simply to allow another build.
+New-install preparation tools remain prohibited as live-upgrade substitutes.
+No operations in flight. Next: human MVP use, not an automatic paid trial.
+
+## Shared-slot launch policy — prior, source only (2026-09-21)
+
+User authorized necessary go-live work, including blocking new local paid builds
+while preserving dashboards/previews. Conservative launch policy is **one paid
+build at a time across three workspaces**, not concurrent paid builds. Implemented
+and offline-tested, **not deployed or activated**; credentials below remain staged,
+cloud AI disabled, local paid execution not yet blocked.
+
+`execution-slot.mjs` persists a non-expiring claim before a login-first handoff.
+Concurrent attempts, alternate route spellings and legacy execution are rejected;
+RPC requires ownership. Stop, human control, upload and preview remain available.
+No automatic dispatch retry or release after crash/timeout. The backend clearance
+endpoint checks terminal settlement, native PID absence, stopped assigned browser,
+reconciled spending and absence of unresolved/uncertain work or operation locks.
+Only positive proof releases a claim, with the old claim retained as evidence.
+Uncertainty requires deliberate operator reconciliation. Do not delete claims to
+force a new run. This is managed gateway admission, not per-user authorization or
+protection against arbitrary trusted-admin/direct executors.
+
+Production gateway startup requires `CVENT_EXECUTION_SLOT_DIR`. Deploy BOTH gateway
+modules, an owner-only state directory and a narrow systemd `ReadWritePaths` for it.
+Backend rollout requires `app/execution-clearance.mjs` and updated server. Existing
+Cvent command locking/spacing and no automatic write retries remain. The single
+active model session limits concurrency, not spending; $60 remains only a target.
+**360 runtime / 24 deployment tests pass**, including local HTTP contention tests.
+No live rollout/disablement/restart/model/browser action in this step.
+
+Next use a NEW controlled upgrade with exclusive intents/backups after fresh
+activity/expiry checks. Never replay preparation/publication/credential dispatchers.
+`prepare-gateway.py` now also copies sibling `execution-slot.mjs` and configures
+state for NEW installs only; it is not an existing-gateway updater. Preserve all
+profiles/evidence/accounting. Settle only still-synthetic preview jobs before any
+necessary restart; do not interrupt real user jobs. Expiry remains
+2026-09-22T16:18:42.211242+00:00. No automatic paid trial. See CURRENT handoffs.
+
+## AI runtime preparation — prior (2026-09-21)
+
+User explicitly requested AI enablement. **Credentials/model installed and verified,
+paid execution still disabled** pending collision/shared-quota safeguards. Each
+backend's existing `/etc/cvent-ego/runner.env` is root-only 0600 and now holds
+Anthropic provider/model plus the team key and the three previously approved
+Cvent API configuration fields. No personal Pi OAuth or human-login credentials.
+Encrypted pinned SSH stdin only; no values in argv, logs, source or Git.
+
+Pinned Pi 0.85.1 lacked Sonnet5 in its shipped catalog. Owner-only
+`/home/egorunner/.pi/agent/models.json` uses the maintained Pi Anthropic catalog
+entry for `claude-sonnet-5`, corroborated by Anthropic's model detail API:
+adaptive thinking, 1M context, 128K output, nonzero catalog costs 2/10/0.2/2.5
+USD/MTok input/output/cache-read/cache-write. No dependency upgrade or pricing
+invention; config contains no secret. Vault rotations need a controlled refresh.
+
+All three hosts passed 20 installation checks, pinned-Pi offline registration,
+actual Anthropic model authentication (no inference) and Cvent OAuth. App PIDs,
+browsers, runtime identities and $0 model cost unchanged. No restart or paid run.
+Evidence `logs/ai-activation/`. `prepare-ai-runtime.py` is a one-time, stage-only
+operator tool; never replay the private `stage-credentials-once.py` dispatcher
+or remove remote `/var/lib/cvent-ego-ai-preparation/` intents/backups/receipts.
+
+Before enabling: approved disjoint event assignments or coordinated exclusion
+including local/other executors, shared API/model concurrency policy, tests and
+controlled activation. The still-usable local executor cannot be ignored merely
+because it is idle now; original local processes/previews remain untouched.
+Spending limits remain disabled by existing product policy, not an enforced $60
+cap. No build may start automatically. Existing restricted-access expiry remains
+2026-09-22T16:18:42.211242+00:00. Older sections describe prior credential state.
+
+## Published restricted staging preview — prior (2026-09-21)
 
 **Live:** `https://staging.app-chartsdarts-dashboard.com/` redirects to workspace 1;
 `/workspaces/1/`, `/workspaces/2/`, `/workspaces/3/` route to separate ARM64 VMs.
@@ -13,9 +126,16 @@ production security.
 Three app services enabled/running, USER ownership, one synthetic preview job
 and fresh browser each, **AI disabled**, $0 model spend. Return/answer/execution
 routes reject 503; no team/personal model credentials or Cvent credentials copied.
-User will supply team Key Vault information in the morning. Verify requested
-Anthropic Sonnet 5 exact model ID/availability, event exclusion and shared quotas
-before paid activation; never start a paid trial automatically.
+Team secret `kvcventstg729` / `anthropic-api-key` is now uploaded/enabled.
+A non-inference Anthropic Models API check at 2026-09-21T19:51:55Z verified the
+credential and exact **Claude Sonnet 5 ID `claude-sonnet-5`**. The key was used
+only in process memory, not printed/persisted or installed on these VMs; no
+runtime change or paid request. Evidence:
+`logs/anthropic-preflight/model-check-cux0oz7k/receipt.json`. Secure runtime
+configuration, installed Pi/provider support, event exclusion and shared quotas
+remain before paid activation; never start a paid trial automatically.
+User-authorized vault firewall addition `47.151.24.159/32` preserves deny/default,
+existing IP/VNet rules and IAM; receipt `logs/key-vault-network/allow-client-y7qo20h7/receipt.json`.
 
 Topology: Caddy authenticates and overwrites `X-Cvent-Staging-User`; loopback
 `gateway.mjs` on 8890 verifies host/origin/identity/expiry, strips credentials and

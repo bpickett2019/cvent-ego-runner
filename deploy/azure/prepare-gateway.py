@@ -31,9 +31,12 @@ def prepare(gateway, inventory):
     (config/'known_hosts').chmod(0o644)
     app = Path('/opt/cvent-ego-gateway'); app.mkdir(mode=0o755); app.chmod(0o755)
     body = Path(gateway).read_bytes(); (app/'gateway.mjs').write_bytes(body); (app/'gateway.mjs').chmod(0o644)
+    (app/'execution-slot.mjs').write_bytes(Path(gateway).with_name('execution-slot.mjs').read_bytes())
+    (app/'execution-slot.mjs').chmod(0o644)
+    slot = BASE/'execution-slot'; slot.mkdir(mode=0o700); os.chown(slot, account.pw_uid, account.pw_gid)
     expiry = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=24)).isoformat()
     env = Path('/etc/cvent-ego-gateway.env')
-    env.write_text(f'CVENT_PUBLIC_ORIGIN=https://{HOST}\nCVENT_STAGING_EXPIRES={expiry}\n')
+    env.write_text(f'CVENT_PUBLIC_ORIGIN=https://{HOST}\nCVENT_STAGING_EXPIRES={expiry}\nCVENT_EXECUTION_SLOT_DIR={slot}\n')
     for n, h in enumerate(hosts, 1):
         port = 18780+n
         command = f'/usr/bin/ssh -F /dev/null -N -i {BASE}/forward-key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={config}/known_hosts -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -L 127.0.0.1:{port}:127.0.0.1:8788 egoproxy@{h["ip"]}'
@@ -68,6 +71,7 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/var/lib/cvent-ego-gateway/execution-slot
 UMask=0077
 [Install]
 WantedBy=multi-user.target

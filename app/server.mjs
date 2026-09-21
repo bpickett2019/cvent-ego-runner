@@ -14,6 +14,7 @@ import { mountWorkbooks } from "./workbooks.mjs";
 import { acknowledgeSessionIncident } from "./session-security.mjs";
 import { provisionCleanBrowser, steelOrigin } from "./clean-browser.mjs";
 import { transitionBrowser } from "./browser-ownership.mjs";
+import { executionCleared } from "./execution-clearance.mjs";
 
 // Native Pi and its tools inherit owner-only artifact permissions.
 process.umask(0o077);
@@ -125,6 +126,7 @@ async function provisionBrowser(record, cancelled) {
 }
 const connection = mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowser });
 mountWorkbooks(app, { root, isBusy: () => connection.isBusy() });
+app.get("/api/execution-clearance/:id", (req, res) => res.json({ cleared: executionCleared(root, req.params.id) }));
 app.get("/api/state", async (_req, res) => res.json(await readJson(statePath)));
 async function browserStopped(runtime) {
   if (!/^[0-9a-f-]{36}$/.test(runtime.jobId || "")) return false;

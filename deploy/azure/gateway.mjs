@@ -2,13 +2,14 @@
 // and overwrite X-Cvent-Staging-User. Only loopback SSH forwards are upstreams.
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { createExecutionSlot } from './execution-slot.mjs';
 
 export function routeWorkspace(raw) {
   if (typeof raw !== 'string' || /[\\\x00-\x20]/.test(raw) || /%(?:2e|2f|5c)/i.test(raw) || /(?:^|\/)\.{1,2}(?:\/|\?|$)/.test(raw)) return null;
   const match = /^\/workspaces\/([123])\/(.*)$/.exec(raw);
   return match ? { id: Number(match[1]), path: '/' + match[2] } : null;
 }
-export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783], now = Date.now }) {
+export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783], now = Date.now, executionSlotDirectory }) {
   const url = new URL(origin), expiry = Date.parse(expiresAt);
   if (url.protocol !== 'https:' || url.origin !== origin || !Number.isFinite(expiry) || ports.length !== 3 || new Set(ports).size !== 3 || ports.some(p => !Number.isInteger(p) || p < 1024 || p > 65535)) throw new Error('Invalid gateway configuration');
   function authorized(req) {
@@ -24,7 +25,12 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
     if (result.origin) result.origin = 'http://127.0.0.1:8788';
     return result;
   }
-  const server = http.createServer((req, res) => {
+  const slot = executionSlotDirectory ? createExecutionSlot({ directory: executionSlotDirectory,
+    clearance: async ({ workspace, jobId }) => {
+      const response = await fetch(`http://127.0.0.1:${ports[workspace - 1]}/api/execution-clearance/${jobId}`, { signal: AbortSignal.timeout(5000) });
+      return response.ok && (await response.json()).cleared === true;
+    } }) : null;
+  const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!authorized(req)) { res.writeHead(403); return res.end('Authenticated staging access required'); }
     if (now() >= expiry) { res.writeHead(503); return res.end('Restricted staging access expired; operator renewal required'); }
@@ -37,6 +43,9 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
       return res.end(JSON.stringify({ version: 1, mode: 'staging', current: route.id,
         workspaces: [1, 2, 3].map(id => ({ id, url: `${origin}/workspaces/${id}/` })) }));
     }
+    try { await slot?.authorize(route.id, route.path, req.method); }
+    catch { res.writeHead(409, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Shared execution slot unavailable or route denied. One paid build at a time; Stop and verify cleanup. Uncertainty requires operator review.' })); }
+    if (now() >= expiry) { res.writeHead(503); return res.end('Restricted staging access expired'); }
     const upstream = http.request({ host: '127.0.0.1', port: ports[route.id - 1], method: req.method, path: route.path, headers: headers(req) }, response => {
       const outgoing = { ...response.headers, 'cache-control': 'no-store' };
       delete outgoing['set-cookie'];
@@ -71,7 +80,9 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
   return server;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const server = createGateway({ origin: process.env.CVENT_PUBLIC_ORIGIN, expiresAt: process.env.CVENT_STAGING_EXPIRES });
+  // Production startup requires an explicitly configured durable slot directory.
+  if (!process.env.CVENT_EXECUTION_SLOT_DIR) throw new Error('Durable execution slot directory required');
+  const server = createGateway({ origin: process.env.CVENT_PUBLIC_ORIGIN, expiresAt: process.env.CVENT_STAGING_EXPIRES, executionSlotDirectory: process.env.CVENT_EXECUTION_SLOT_DIR });
   server.listen(8890, '127.0.0.1');
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { server.close(); server.closeAllConnections(); setTimeout(() => process.exit(0), 1000).unref(); });
 }

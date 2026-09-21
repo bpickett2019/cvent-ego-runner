@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createGateway, routeWorkspace } from '../deploy/azure/gateway.mjs';
@@ -8,7 +12,7 @@ import { isLocalRequest } from '../app/rr-connection.mjs';
 import { localWorkspaceConfig } from '../public/workspace-config.js';
 import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace-routing.js';
 const origin = 'https://staging.example.test';
-async function fixture(t, expired = false) {
+async function fixture(t, expired = false, executionSlotDirectory) {
   const backends = [], websocketServers = [];
   for (let id = 1; id <= 3; id++) {
     const backend = http.createServer((req, res) => {
@@ -20,7 +24,7 @@ async function fixture(t, expired = false) {
     wss.on('connection', (ws, req) => ws.send(JSON.stringify({ id, path: req.url, local: isLocalRequest(req) })));
     backend.listen(0, '127.0.0.1'); await once(backend, 'listening'); backends.push(backend); websocketServers.push(wss);
   }
-  const gateway = createGateway({ origin, expiresAt: new Date(Date.now() + (expired ? -1000 : 60000)).toISOString(), ports: backends.map(b => b.address().port) });
+  const gateway = createGateway({ origin, expiresAt: new Date(Date.now() + (expired ? -1000 : 60000)).toISOString(), ports: backends.map(b => b.address().port), executionSlotDirectory });
   gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
   t.after(async () => {
     for (const wss of websocketServers) { for (const ws of wss.clients) ws.terminate(); wss.close(); }
@@ -52,6 +56,19 @@ test('gateway requires trusted proxy identity/host/origin, redirects root and re
   assert.equal((await f.request('/workspaces/2')).headers.location, '/workspaces/2/');
   assert.equal((await f.request('/api/jobs')).status, 404);
   assert.equal((await f.request('/workspaces/4/')).status, 404);
+});
+test('live HTTP gate forwards only one handoff and preserves Stop/preview across workspaces', async t => {
+  const f = await fixture(t, false, mkdtempSync(join(tmpdir(), 'gateway-slot-')));
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  const attempts = await Promise.all(ids.map((id, i) => f.request(`/workspaces/${i + 1}/api/jobs/${id}/answer`, {}, 'POST', '{}')));
+  assert.equal(attempts.filter(r => r.status === 200).length, 1);
+  assert.equal(attempts.filter(r => r.status === 409).length, 2);
+  for (const [i, id] of ids.entries()) {
+    assert.equal((await f.request(`/workspaces/${i + 1}/api/jobs/${id}/stop`, {}, 'POST', '{}')).status, 200);
+    assert.equal((await f.request(`/workspaces/${i + 1}/api/jobs/${id}/read`, {}, 'POST', '{}')).status, 200);
+    assert.equal((await f.request(`/workspaces/${i + 1}/api/jobs/${id}/answer/`, {}, 'POST', '{}')).status, 409);
+    assert.equal((await f.request(`/workspaces/${i + 1}/api/target`, {}, 'POST', '{}')).status, 409);
+  }
 });
 test('restricted staging expiry fails closed', async t => { const f = await fixture(t, true); assert.equal((await f.request('/')).status, 503); });
 test('websocket viewer goes only to the assigned workspace with normalized origin', async t => {
