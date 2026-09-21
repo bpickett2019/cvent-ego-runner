@@ -263,17 +263,18 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   // Settlement releases this process; another run must use a fresh upload.
   assert.equal((await request(`/api/jobs/${second.id}/stop`, {})).status, 409);
   const budgetJob = await upload(undefined, undefined, "Budget Event");
-  reportedCost = 50;
+  reportedCost = 75;
   assert.equal((await start(budgetJob.id)).status, 200);
   let budgetResult;
   for (let i = 0; i < 60; i++) {
     budgetResult = await (await request(`/api/jobs/${budgetJob.id}`)).json();
-    if (budgetResult.status === "STOPPED") break;
+    if (budgetResult.piCostUSD === 75) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(budgetResult.status, "STOPPED");
-  assert.match(budgetResult.stopReason, /spending threshold/);
-  assert.equal(budgetResult.piCostUSD, 50);
+  assert.equal(budgetResult.status, "RUNNING");
+  assert.equal(budgetResult.spendingLimitEnabled, false);
+  assert.equal(budgetResult.piCostUSD, 75);
+  assert.equal((await request(`/api/jobs/${budgetJob.id}/stop`, {})).status, 200);
   assert.ok(fake.commands.some(command => command.type === "clear_queue"));
   reportedCost = 3.5;
   const third = await upload();

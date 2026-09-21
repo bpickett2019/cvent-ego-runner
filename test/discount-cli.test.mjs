@@ -50,7 +50,7 @@ globalThis.fetch=async(input,init={})=>{
   return new Response(null,{status:204});
  }
  if(u.pathname===base+'/${discountId}'){
-  assert.equal(m,'PUT');assert.equal(original.active,false);assert.equal(links.length,1);
+  assert.equal(m,'PUT');
   await appendFile(dir+'/writes.log','FINALIZE\\n');
   const body=JSON.parse(init.body),saved={...original,...body,...(body.type==='VOLUME_DISCOUNT'?{}:{capacity:{...body.capacity,used:0}})};
   if(!process.env.TEST_FINAL_STALE)await writeFile(dir+'/remote.json',JSON.stringify(saved));
@@ -91,52 +91,61 @@ test('current-run uncertain API writes still block mutation before network acces
   assert.equal(await readFile(join(f.dir, 'api-write-uncertain.json'), 'utf8'), marker);
 });
 
-test("CLI advertises create-only production writes and explains prohibited update operations", async t => {
+test('browser save uncertainty blocks API writes before network but permits reads', async t => {
+  const f = await setup(t); const marker = '{"reason":"unknown save"}';
+  await writeFile(join(f.dir, 'browser-save-uncertain.json'), marker);
+  const denied = await f.run(); assert.equal(denied.code, 1); assert.match(denied.stderr, /browser save is uncertain/);
+  assert.equal(existsSync(join(f.dir, 'requests.log')), false);
+  assert.equal((await f.run('listDiscounts', {})).code, 0);
+  assert.equal(await readFile(join(f.dir, 'browser-save-uncertain.json'), 'utf8'), marker);
+});
+
+test("CLI advertises scoped event updates and explains protected shared operations", async t => {
   const f = await setup(t), result = await f.run("capabilities");
   assert.equal(result.code, 0, result.stderr);
   const capabilities = JSON.parse(result.stdout);
   assert.equal(capabilities.operations.configureDiscount, "api-write");
   assert.equal(capabilities.operations.configureVolumeDiscount, "api-write");
-  assert.equal(capabilities.writeCapabilities.configureVolumeDiscount.mode, "create-only");
+  assert.equal(capabilities.writeCapabilities.configureVolumeDiscount.mode, "event-only-create-or-update");
   assert.equal(capabilities.operations.listDiscounts, "api-read");
   assert.equal(capabilities.operations.listQuantityItems, "api-read");
   assert.match(capabilities.writeCapabilities.configureDiscount.supports.join(' '), /item-scoped/);
-  for (const operation of ["updateEvent", "updateEventBasics", "updateRegistrationType", "updateEventCustomFieldAnswers"]) {
-    assert.equal(capabilities.operations[operation], undefined);
-    assert.match(capabilities.blockedOperations[operation], /updates are prohibited/);
+  for (const operation of ["updateEvent", "updateEventBasics", "updateRegistrationType", "enableEventFeature"]) assert.equal(capabilities.operations[operation], 'api-write');
+  for (const operation of ['updateEventCustomFieldAnswers', 'createContactType', 'createCustomField', 'listSessions']) {
+    assert.equal(capabilities.operations[operation], undefined); assert.ok(capabilities.blockedOperations[operation]);
   }
   assert.equal(existsSync(join(f.dir, "requests.log")), false);
 });
-test("CLI rejects every existing-item update, including event rename, before any network call or uncertainty", async t => {
+test("CLI blocks shared/integration operations before network; event rename before mutation", async t => {
   const f = await setup(t, true);
-  for (const operation of ["updateEvent", "updateEventBasics", "updateRegistrationType", "updateEventCustomFieldAnswers"]) {
-    const result = await f.run(operation, { rrReferences: ["Event!B2"], data: { title: "Renamed", preserveExistingItems: false } });
-    assert.equal(result.code, 1); assert.match(result.stderr, /preservation policy prohibits/);
-  }
-  assert.equal((await f.receipts()).length, 4);
-  for (const receipt of await f.receipts()) assert.equal(receipt.status, "BLOCKED");
-  assert.deepEqual(JSON.parse(await readFile(join(f.dir, "remote.json"))), row);
-  for (const file of ["requests.log", "writes.log", "api-write-uncertain.json", "api-operation.lock"]) assert.equal(existsSync(join(f.dir, file)), false, file);
+  for (const operation of ['updateEventCustomFieldAnswers', 'createCustomField', 'createContactType', 'listSessions']) assert.equal((await f.run(operation, {})).code, 1);
+  assert.equal(existsSync(join(f.dir, 'requests.log')), false);
+  for (const operation of ['updateEvent', 'updateEventBasics', 'updateRegistrationType']) assert.equal((await f.run(operation, { rrReferences: ['Event!B2'], data: { title: 'Renamed' } })).code, 1);
+  for (const receipt of await f.receipts()) assert.equal(receipt.status, 'BLOCKED');
+  assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'remote.json'))), row);
+  for (const file of ['writes.log', 'api-write-uncertain.json', 'api-operation.lock']) assert.equal(existsSync(join(f.dir, file)), false);
 });
-test("CLI preserves an existing code and reports differences without pretending the RR is satisfied", async t => {
-  const f = await setup(t, true);
-  const result = await f.run("configureDiscount", { ...request, data: { ...request.data, createIfMissing: true } });
+test("CLI updates an existing event code with durable intent, saved verification and no duplicate creation", async t => {
+  const f = await setup(t, true), result = await f.run('configureDiscount', request);
   assert.equal(result.code, 0, result.stderr);
   const output = JSON.parse(result.stdout), receipt = (await f.receipts())[0];
-  assert.equal(output.action, "creation-required");
-  assert.match(output.limitation, /unsupported authoring capability/); assert.equal(output.requirementsSatisfied, false);
-  assert.deepEqual(output.differences, ["note"]);
-  assert.equal(receipt.status, "CREATION_REQUIRED"); assert.deepEqual(receipt.result.saved, row);
-  assert.equal(receipt.prepared, undefined); assert.equal(receipt.writeEvidence, undefined);
-  assert.deepEqual(JSON.parse(await readFile(join(f.dir, "remote.json"))), row);
-  assert.equal(existsSync(join(f.dir, "writes.log")), false);
-  assert.equal(existsSync(join(f.dir, "api-write-uncertain.json")), false);
-  assert.deepEqual(JSON.parse(await readFile(join(f.dir, "api-discounts.json"))), { eventId, discounts: { EXISTING: discountId } });
-  const satisfied = await f.run("configureDiscount", { ...request, data: { ...request.data, patch: { note: "Original" } } });
-  assert.equal(satisfied.code, 0, satisfied.stderr);
-  assert.equal(JSON.parse(satisfied.stdout).requirementsSatisfied, true);
-  assert.equal(JSON.parse(satisfied.stdout).action, "unchanged");
-  assert.equal(existsSync(join(f.dir, "writes.log")), false);
+  assert.equal(output.action, 'updated'); assert.equal(output.requirementsSatisfied, true);
+  assert.equal(receipt.status, 'PASS'); assert.deepEqual(receipt.prepared.baseline, row);
+  assert.deepEqual(receipt.result.saved, { ...row, note: 'Requested' });
+  assert.equal(receipt.writeEvidence[0].phase, 'ACKNOWLEDGED_NOT_VERIFIED'); assert.equal(receipt.writeEvidence.at(-1).matched, true);
+  assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), false);
+  assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'api-discounts.json'))), { eventId, discounts: { EXISTING: discountId } });
+  const repeat = await f.run('configureDiscount', request); assert.equal(repeat.code, 0, repeat.stderr);
+  assert.equal(JSON.parse(repeat.stdout).action, 'unchanged'); assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), 'FINALIZE\n');
+});
+test('existing discount update uncertainty blocks replay and keeps the original ID', async t => {
+  const f = await setup(t, true), result = await f.run('configureDiscount', request, { TEST_FINAL_STALE: '1' });
+  assert.equal(result.code, 1); const receipt = (await f.receipts())[0]; assert.equal(receipt.status, 'UNCERTAIN');
+  assert.equal(receipt.prepared.discountId, discountId); assert.equal(receipt.prepared.baseline.id, discountId);
+  assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), true);
+  const writes = await readFile(join(f.dir, 'writes.log'), 'utf8'); assert.equal(writes, 'FINALIZE\n');
+  assert.equal((await f.run('configureDiscount', request)).code, 1); assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), writes);
+  assert.equal((await f.run('listDiscounts', {})).code, 0);
 });
 test("CLI persists creation evidence/identity; retries reuse and stale later lookup cannot recreate it", async t => {
   const f = await setup(t); const result = await f.run(); assert.equal(result.code, 0, result.stderr);
@@ -177,8 +186,7 @@ test("production CLI allows new item-discount POST/link/finalize, retaining each
   assert.equal(JSON.parse(repeat.stdout).action, 'unchanged');
   assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), 'POST\nLINK\nFINALIZE\n');
   const changed = itemRequest(); changed.data.agendaItems[0].id = '44444444-4444-4444-4444-444444444444';
-  const preserved = await f.run('configureDiscount', changed); assert.equal(preserved.code, 0, preserved.stderr);
-  assert.equal(JSON.parse(preserved.stdout).requirementsSatisfied, false);
+  const preserved = await f.run('configureDiscount', changed); assert.equal(preserved.code, 1); assert.match(preserved.stderr, /Removing\/replacing/);
   assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), 'POST\nLINK\nFINALIZE\n');
 });
 test("production item-discount failures retain the entire uncertain creation and never replay", async t => {
@@ -206,9 +214,9 @@ test('production volume CLI records durable identity and verifies new-only final
     const writes = await readFile(join(f.dir, 'writes.log'), 'utf8'); assert.equal(writes, linked ? 'POST\nLINK\nFINALIZE\n' : 'POST\n');
     const repeat = await f.run('configureVolumeDiscount', request); assert.equal(repeat.code, 0, repeat.stderr); assert.equal(JSON.parse(repeat.stdout).action, 'unchanged');
     const changed = structuredClone(request); changed.data.patch.thresholdLimit = 8;
-    const preserve = await f.run('configureVolumeDiscount', changed); assert.equal(preserve.code, 0, preserve.stderr); assert.equal(JSON.parse(preserve.stdout).requirementsSatisfied, false);
+    const preserve = await f.run('configureVolumeDiscount', changed); assert.equal(preserve.code, 0, preserve.stderr); assert.equal(JSON.parse(preserve.stdout).requirementsSatisfied, true);
     assert.equal((await f.run('configureVolumeDiscount', request, { TEST_HIDE: '1' })).code, 1);
-    assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), writes);
+    assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), writes + 'FINALIZE\n');
   }
 });
 test('volume CLI blocks absent evidence/takeover and retains uncertainty across all partial failures', async t => {

@@ -8,7 +8,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --import ./test/offline-network.mjs --test test/*.test.mjs",
     "start": "node app/server.mjs",
     "check:repository": "node scripts/check-repository.mjs",
     "check:installation": "node scripts/check-installation.mjs",

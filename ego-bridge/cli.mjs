@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { CdpClient } from "./cdp-client.mjs";
 import { SteelEgoHost } from "./host.mjs";
+import { saveObserverForHost } from "./save-observer.mjs";
 
 const project = resolve(new URL("..", import.meta.url).pathname);
 const workspace = process.env.RR_WORKSPACE || resolve(project, "data/current");
@@ -56,6 +57,8 @@ async function main() {
     await client.connect();
     const host = new SteelEgoHost(client, runtimePath);
     globalThis.ego = host;
+    globalThis.observeSave = saveObserverForHost(host);
+    globalThis.saveOnce = saveObserverForHost(host, { submit: true });
 
     const nativeFetch = globalThis.fetch;
     globalThis.fetch = async (input, init = {}) => {

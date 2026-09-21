@@ -95,7 +95,7 @@ test('fresh handoff still blocks operation locks, live processes, cleanup failur
     await rm(join(f.job.workspace, file));
   }
   const path = join(f.job.workspace, 'job.json'), prior = await readFile(path, 'utf8');
-  for (const patch of [{spendingUnreconciled:true}, {stopFailures:['failed abort']}, {ownedPid:process.pid}, {piCostUSD:null}, {piCostUSD:50}]) {
+  for (const patch of [{spendingUnreconciled:true}, {stopFailures:['failed abort']}, {ownedPid:process.pid}, {piCostUSD:null}]) {
     await writeFile(path, JSON.stringify({...JSON.parse(prior), ...patch}));
     assert.equal((await f.back(next.id)).body.aiStarted, false, JSON.stringify(patch));
   }

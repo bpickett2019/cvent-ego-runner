@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 
 // One canonical task/SOW, captured in each new job; no duplicated policy prose.
-// Polling cannot guarantee final provider billing: retain external/in-flight headroom.
+// Track spending without an automatic dollar stop. Legacy amounts remain metadata.
 export const RUN_POLICY = Object.freeze({
   instruction: "Execute the uploaded RR for the upload-bound target under approved-sow.md and verify saved results.",
   executionPolicy: "api-first-ego-fallback",
   executionDescription: "Cvent API first for supported operations; Ego/Steel for documented unsupported UI work",
+  spendingLimitEnabled: false,
   targetCostUSD: 60,
   allowanceUSD: 60,
   externalCostReserveUSD: 10,

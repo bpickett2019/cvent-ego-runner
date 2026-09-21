@@ -41,7 +41,7 @@ function fixture(options = {}) {
       if (options.transportAt === phase) throw new Error("Connection lost");
       if (phase === "link") {
         const id = u.pathname.split("/").at(-1), item = items.find(item => item.id === id);
-        assert.ok(item); assert.equal(row.active, false); assert.equal(row.applyToAllAgendaItems, false);
+        assert.ok(item); if (!options.existing) { assert.equal(row.active, false); assert.equal(row.applyToAllAgendaItems, false); }
         pendingLink = { ...item, discount: { id: discountId } }; linkReads = 0;
         if (options.extraLink) links.push({ ...items[1], discount: { id: discountId } });
         return new Response(null, { status: 204 });
@@ -65,10 +65,12 @@ test("item-scoped code is created inactive, linked via API, finalized once, and 
   assert.equal(f.evidence.at(-1).phase, "FINAL_READBACK"); assert.equal(f.evidence.at(-1).matched, true);
   assert.equal((await f.run()).action, "unchanged"); assert.equal(f.writes.length, 4, "repeat never adds or changes links");
 });
-test("existing discounts and their links are preserved even when requirements differ", async () => {
+test("existing event discounts receive additive links without deleting or duplicating objects", async () => {
   const f = fixture({ existing: true }); const before = structuredClone(f.row);
-  const result = await f.run(); assert.equal(result.action, "creation-required"); assert.equal(result.requirementsSatisfied, false);
-  assert.deepEqual(result.differences, ["agendaItems"]); assert.deepEqual(f.row, before); assert.equal(f.writes.length, 0);
+  const result = await f.run(); assert.equal(result.action, "updated"); assert.equal(result.requirementsSatisfied, true);
+  assert.deepEqual(f.row, before); assert.deepEqual(f.writes.map(w => w.phase), ['link', 'link']);
+  await assert.rejects(f.run({ ...input(), agendaItems: [items[0]] }), /Removing\/replacing/);
+  assert.equal(f.writes.length, 2);
 });
 test("missing, foreign, duplicate or malformed catalogs block before discount creation", async () => {
   for (const options of [{ missing: true }, { foreign: true }, { duplicateCatalog: true }, { malformedLinks: true }]) {

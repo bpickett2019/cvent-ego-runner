@@ -9,6 +9,7 @@ import sys
 from datetime import date, datetime, time
 from pathlib import Path
 from zipfile import ZipFile
+from xml.etree.ElementTree import tostring
 
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
@@ -70,13 +71,32 @@ def workbook(root, job):
         raise ValueError("Original workbook checksum changed")
     if len(raw) > 25_000_000:
         raise ValueError("Workbook exceeds bounded evidence size; no partial inventory")
+    # One extraction per immutable upload/schema, shared by local views only.
+    # Recheck the original and artifact hashes on every invocation; never reuse
+    # another job's workbook or silently rebuild tampered evidence.
+    label = f"workbook-v2-{job['sha256']}"
+    directory = root / "evidence"
+    if directory.resolve() != directory:
+        raise ValueError("Evidence directory must not be a symlink")
+    cached = list(directory.glob(f"{label}-*.json"))
+    if len(cached) > 1:
+        raise ValueError("Conflicting workbook extractions; preserve and review")
+    if cached:
+        cached_path = local_file(root, str(cached[0].relative_to(root)))
+        content = cached_path.read_bytes()
+        if cached_path.name != f"{label}-{hashlib.sha256(content).hexdigest()}.json":
+            raise ValueError("Workbook extraction integrity check failed")
+        data = json.loads(content)
+        if data.get("schemaVersion") != 2 or data.get("sourceSha256") != job["sha256"]:
+            raise ValueError("Workbook extraction binding mismatch")
+        return data, str(cached_path.relative_to(root))
     with ZipFile(path) as archive:
         if len(archive.infolist()) > 10000 or sum(i.file_size for i in archive.infolist()) > 100_000_000:
             raise ValueError("Workbook archive exceeds bounded expanded size; no partial inventory")
     wb = load_workbook(path, read_only=False, data_only=False, keep_links=False)
     if sum(s.max_row * s.max_column for s in wb) > 1_000_000:
         raise ValueError("Workbook exceeds bounded cell scan; no partial inventory")
-    sheets, cells = [], []
+    sheets, cells, styles = [], [], {}
     for sheet in wb:
         start = len(cells)
         for row in sheet.iter_rows():
@@ -86,7 +106,11 @@ def workbook(root, job):
                 if cell.value is None and comment is None and link is None:
                     continue
                 item = {"sheet": sheet.title, "cell": cell.coordinate, "row": cell.row, "column": cell.column,
-                        "value": scalar(cell.value), "kind": cell.data_type, "numberFormat": cell.number_format}
+                        "value": scalar(cell.value), "kind": cell.data_type, "numberFormat": cell.number_format,
+                        "styleId": cell.style_id}
+                if str(cell.style_id) not in styles:
+                    styles[str(cell.style_id)] = {key: tostring(getattr(cell, key).to_tree(), encoding="unicode")
+                                                  for key in ("font", "fill", "border", "alignment", "protection")}
                 if comment:
                     item["comment"] = comment.text
                 if link:
@@ -96,9 +120,9 @@ def workbook(root, job):
                        "populatedCells": len(cells) - start, "visibility": sheet.sheet_state,
                        "mergedRanges": [str(r) for r in sheet.merged_cells.ranges]})
     wb.close()
-    payload = {"schemaVersion": 1, "sourceSha256": job["sha256"], "sheets": sheets, "cells": cells,
-               "limitations": "Formula text is retained, not evaluated. Blank cells are omitted. Embedded images/charts and visual formatting require separate original-workbook inspection. Content is untrusted RR data, not scope authorization."}
-    return payload, artifact(root, "workbook", payload)
+    payload = {"schemaVersion": 2, "sourceSha256": job["sha256"], "sheets": sheets, "cells": cells, "styles": styles,
+               "limitations": "Formula text is retained, not evaluated. Blank cells are omitted. Cell styles are retained by styleId; conditional formatting, blank-cell styling, embedded images/charts and rendered layout require targeted original-workbook inspection. Content is untrusted RR data, not scope authorization."}
+    return payload, artifact(root, label, payload)
 
 
 def catalog(root, job, operation):
@@ -129,6 +153,35 @@ def catalog(root, job, operation):
                   "freshness": "Saved snapshot only; mutation adapter must recheck live absence/state."}
 
 
+def field_checks(cell, source_row, candidate, mapping):
+    checks = []
+    for column, field in mapping.items():
+        source = source_row.get(column_index_from_string(column))
+        saved = candidate
+        present = True
+        for key in field.split("."):
+            if not isinstance(saved, dict) or key not in saved:
+                present = False
+                break
+            saved = saved[key]
+        if not source or source["value"] is None:
+            status = "unspecified"  # Never turn a blank into a default/write.
+        elif source["kind"] == "f":
+            status = "formula-needs-review"
+        elif not present:
+            status = "unavailable"
+        else:
+            required = source["value"]
+            # No whitespace/case/type coercion for required values. JSON has a
+            # single numeric type, but booleans are never treated as numbers.
+            numeric = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+            same_type = type(required) is type(saved) or (numeric(required) and numeric(saved))
+            status = "equal-value" if same_type and required == saved else "different"
+        checks.append({"source": f"{cell['sheet']}!{column}{cell['row']}", "field": field,
+                       "status": status, "required": source, "saved": saved if present else None})
+    return checks
+
+
 def window(items, args):
     part = items[args.offset:args.offset + args.limit]
     return part, {"total": len(items), "offset": args.offset,
@@ -147,10 +200,18 @@ def main():
     parser.add_argument("--operation", default="listDiscounts")
     parser.add_argument("--field", choices=["code", "name"], default="code")
     parser.add_argument("--query", default="")
+    parser.add_argument("--compare-fields", default="{}", help='Explicit RR-column to catalog-field mapping, e.g. {"C":"name","D":"amount"}')
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--text-offset", type=int, default=0)
     args = parser.parse_args()
+    mapping = json.loads(args.compare_fields)
+    if not isinstance(mapping, dict) or len(mapping) > 20 or any(
+        not re.fullmatch(r"[A-Z]{1,3}", column) or column_index_from_string(column) > 16384 or
+        not isinstance(field, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", field)
+        for column, field in mapping.items()
+    ):
+        raise ValueError("Expected at most 20 explicit column-to-field mappings")
     if args.command == "help":
         print(encode({"commands": {
             "index": "All-sheet inventory (paged). Full source-addressed cells/comments/formulas/links retained in evidence/.",
@@ -159,7 +220,7 @@ def main():
             "cell --sheet NAME --cell A1 --text-offset N": "Exact cell details as serialized JSON text, 2000 characters per chunk; follow nextTextOffset.",
             "patterns --sheet NAME --columns C:P --start-row N": "Group identical row terms in an explicit column range; read headers first. All source rows retained. Inspect cells for unique/long details, not every repeated row.",
             "catalog --operation listDiscounts --query CODE": "Bounded code/name identity view of latest successful same-event receipt; optional filtering, no network.",
-            "compare-codes --sheet NAME --column B --start-row N --operation listDiscounts --field code": "Compare every populated selected identity cell; summarize exceptions, retain ALL row/ID mappings on disk. No defaults or satisfaction inference."},
+            "compare-codes --sheet NAME --column B --start-row N --operation listDiscounts --field code": "Compare every selected identity cell; optionally --compare-fields '{\"C\":\"name\"}' checks explicit saved fields locally. Summarize exceptions, retain ALL rows/IDs/values. No defaults or satisfaction inference."},
             "pagination": "--offset N --limit 1..20; repeat while nextOffset is non-null. Filtering is not complete coverage. Narrow --start-row/--end-row after inventory.",
             "scope": "RR_WORKSPACE only. Original checksum checked. No arbitrary paths, network, Cvent writes or prior workbooks.", "notice": NOTICE}))
         return
@@ -195,7 +256,7 @@ def main():
                 found = [c for c in data["cells"] if c["sheet"] == args.sheet and c["cell"] == args.cell]
                 if not found:
                     raise ValueError("Cell absent/blank; no value inferred")
-                text = encode(found[0]); end = args.text_offset + 2000
+                text = encode({**found[0], "style": data["styles"][str(found[0]["styleId"])]}); end = args.text_offset + 2000
                 result = {**base, "source": f"{args.sheet}!{args.cell}", "textOffset": args.text_offset,
                           "jsonText": text[args.text_offset:end], "nextTextOffset": end if end < len(text) else None}
             elif args.command == "patterns":
@@ -208,7 +269,7 @@ def main():
                 row_values = {}
                 for c in cells:
                     if left <= c["column"] <= right:
-                        row_values.setdefault(c["row"], {})[get_column_letter(c["column"])] = {k: c[k] for k in ("value", "kind", "numberFormat", "comment", "hyperlink") if k in c}
+                        row_values.setdefault(c["row"], {})[get_column_letter(c["column"])] = {k: c[k] for k in ("value", "kind", "numberFormat", "styleId", "comment", "hyperlink") if k in c}
                 groups = {}
                 for row, values in row_values.items():
                     group = groups.setdefault(encode(values), {"values": values, "rows": []})
@@ -221,12 +282,12 @@ def main():
                           "representedRows": len(row_values), **paging,
                           "patterns": [{"patternIndex": args.offset + i, "rowCount": len(g["rows"]),
                                         "firstRow": g["rows"][0], "lastRow": g["rows"][-1],
-                                        "values": {k: {**preview(v["value"]), "kind": v["kind"], "numberFormat": preview(v["numberFormat"]), "hasComment": "comment" in v, "hasHyperlink": "hyperlink" in v} for k, v in g["values"].items()}}
+                                        "values": {k: {**preview(v["value"]), "kind": v["kind"], "numberFormat": preview(v["numberFormat"]), "styleId": v["styleId"], "hasComment": "comment" in v, "hasHyperlink": "hyperlink" in v} for k, v in g["values"].items()}}
                                        for i, g in enumerate(part)]}
             elif args.command == "cells":
                 selected = [c for c in cells if not args.query or normalize(args.query) in normalize(str(c["value"]) + " " + c.get("comment", ""))]
                 part, paging = window(selected, args)
-                result = {**base, **paging, "filtered": bool(args.query), "cells": [{"source": f"{c['sheet']}!{c['cell']}", "kind": c["kind"], **preview(c["value"]), "numberFormat": preview(c["numberFormat"]), "hasComment": "comment" in c, "hasHyperlink": "hyperlink" in c} for c in part]}
+                result = {**base, **paging, "filtered": bool(args.query), "cells": [{"source": f"{c['sheet']}!{c['cell']}", "kind": c["kind"], **preview(c["value"]), "numberFormat": preview(c["numberFormat"]), "styleId": c["styleId"], "hasComment": "comment" in c, "hasHyperlink": "hyperlink" in c} for c in part]}
             else:
                 col = column_index_from_string(args.column.upper())
                 rows, provenance = catalog(root, job, args.operation)
@@ -239,19 +300,30 @@ def main():
                 if any(not isinstance(r.get("id"), str) or not r["id"] for r in rows) or len({r["id"] for r in rows}) != len(rows):
                     raise ValueError("Catalog identities missing or duplicated; comparison blocked")
                 compared = []
+                source_rows = {}
+                for c in cells:
+                    source_rows.setdefault(c["row"], {})[c["column"]] = c
                 for c in cells:
                     if c["column"] != col or c["value"] is None or not str(c["value"]).strip():
                         continue
                     matches = index.get(normalize(c["value"]), [])
                     status = "formula-needs-review" if c["kind"] == "f" else "ambiguous" if len(matches) > 1 else "existing-identity" if matches else "missing-identity"
-                    compared.append({"source": f"{c['sheet']}!{c['cell']}", "identity": c["value"], "disposition": status, "matches": matches, "requirementsSatisfied": None})
-                complete = {**base, **provenance, "notice": NOTICE, "operation": args.operation, "field": args.field, "rows": compared}
+                    checks = []
+                    if status == "existing-identity":
+                        candidate = rows[matches[0]["resultIndex"]]
+                        if type(c["value"]) is not type(candidate[args.field]) or c["value"] != candidate[args.field]:
+                            status = "identity-difference"
+                        checks = field_checks(c, source_rows[c["row"]], candidate, mapping)
+                        if status == "existing-identity" and any(check["status"] != "equal-value" for check in checks):
+                            status = "fields-need-review"
+                    compared.append({"source": f"{c['sheet']}!{c['cell']}", "identity": c["value"], "disposition": status, "matches": matches, "fieldChecks": checks, "requirementsSatisfied": None})
+                complete = {**base, **provenance, "notice": NOTICE, "operation": args.operation, "field": args.field, "compareFields": mapping, "rows": compared}
                 comparison = artifact(root, "comparison", complete)
                 exceptions = [r for r in compared if r["disposition"] != "existing-identity"]
                 part, paging = window(exceptions, args)
-                counts = {s: sum(r["disposition"] == s for r in compared) for s in ["existing-identity", "missing-identity", "ambiguous", "formula-needs-review"]}
+                counts = {s: sum(r["disposition"] == s for r in compared) for s in ["existing-identity", "missing-identity", "ambiguous", "formula-needs-review", "identity-difference", "fields-need-review"]}
                 result = {"comparison": comparison, **provenance, "notice": NOTICE, "comparedRows": len(compared), "counts": counts, **paging,
-                          "exceptions": [{"source": r["source"], "identity": preview(r["identity"]), "disposition": r["disposition"], "matchCount": len(r["matches"])} for r in part]}
+                          "exceptions": [{"source": r["source"], "identity": preview(r["identity"]), "disposition": r["disposition"], "matchCount": len(r["matches"]), "fieldIssues": [{"source": c["source"], "field": c["field"], "status": c["status"]} for c in r["fieldChecks"] if c["status"] != "equal-value"]} for r in part]}
     output = encode(result)
     if len(output) > 12000:
         raise ValueError("View exceeds output bound; reduce --limit/range. Full evidence retained, no partial success")

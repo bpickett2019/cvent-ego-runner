@@ -35,9 +35,10 @@ test('bounded cell views expose continuations and exact long-cell recovery rathe
 });
 test('identity comparison is compact but retains every matched row/ID and never implies satisfaction',async t=>{
  const f=await fixture(t),r=f.run('compare-codes','--sheet','Arbitrary RR','--start-row','2');assert.equal(r.status,0,r.stderr);
- assert.deepEqual(r.json.counts,{'existing-identity':2,'missing-identity':1,ambiguous:0,'formula-needs-review':1});assert.equal(r.json.comparedRows,4);assert.ok(r.stdout.length<2500);
+ assert.deepEqual(r.json.counts,{'existing-identity':1,'missing-identity':1,ambiguous:0,'formula-needs-review':1,'identity-difference':1,'fields-need-review':0});assert.equal(r.json.comparedRows,4);assert.ok(r.stdout.length<2500);
  const full=JSON.parse(await readFile(join(f.root,r.json.comparison)));assert.equal(full.rows.length,4);assert.ok(full.rows.every(x=>x.requirementsSatisfied===null));assert.equal(full.rows[0].matches[0].id,'discount-1');
  assert.match(full.notice,/missing is not creation approval/);assert.equal(full.rows[2].source,'Arbitrary RR!B4');
+ assert.equal(full.rows[2].disposition,'identity-difference','normalized candidates never hide exact RR identity differences');
 });
 test('row patterns collapse repeated terms without dropping source mappings or treating bounds as consecutive rows',async t=>{
  const f=await fixture(t);
@@ -75,6 +76,65 @@ test('checksum, artifact tampering, workspace symlinks and invalid bounds fail w
  await writeFile(join(f.root,'original.xlsx'),'changed');assert.notEqual(f.run('index').status,0);
  const h=await fixture(t);await rm(join(h.root,'receipts'),{recursive:true});await symlink(join(f.root,'receipts'),join(h.root,'receipts'));assert.notEqual(h.run('catalog').status,0);
  const g=await fixture(t);await symlink(tmpdir(),join(g.root,'evidence'));assert.notEqual(g.run('index').status,0);assert.deepEqual(await readFile(join(g.root,'original.xlsx')),g.original);
+});
+
+test('unchanged uploads reuse extraction without reopening Excel; changed source never reuses it',async t=>{
+ const f=await fixture(t),first=f.run('index');assert.equal(first.status,0,first.stderr);
+ const artifact=join(f.root,first.json.evidence),before=await readFile(artifact);
+ const result=execFileSync('python3',['-c',`import runpy,sys,json\nfrom pathlib import Path\nsys.path.insert(0,str(Path(sys.argv[1]).parent))\nm=runpy.run_path(sys.argv[1]);fn=m['workbook']\ndef forbidden(*a,**k): raise AssertionError('Excel was parsed again')\nfn.__globals__['load_workbook']=forbidden\np=Path(sys.argv[2]).resolve();data,evidence=fn(p,json.loads((p/'job.json').read_text()));print(evidence)`,script,f.root],{encoding:'utf8'}).trim();
+ assert.equal(result,first.json.evidence);
+ execFileSync('python3',['-c',`from openpyxl import load_workbook\nimport sys\nw=load_workbook(sys.argv[1]);w.active['A2']='New RR value';w.save(sys.argv[1])`,join(f.root,'original.xlsx')]);
+ assert.notEqual(f.run('index').status,0,'unchanged job hash refuses changed original');
+ const job=JSON.parse(await readFile(join(f.root,'job.json')));job.sha256=createHash('sha256').update(await readFile(join(f.root,'original.xlsx'))).digest('hex');await writeFile(join(f.root,'job.json'),JSON.stringify(job));
+ const next=f.run('index');assert.equal(next.status,0,next.stderr);assert.notEqual(next.json.evidence,first.json.evidence);
+ assert.deepEqual(await readFile(artifact),before);
+ const other=await fixture(t);assert.equal(other.run('index').status,0);assert.notEqual(other.root,f.root);
+});
+test('changing sheet names/layouts and visual styles remain source-addressed, not template-specific',async t=>{
+ const f=await fixture(t);
+ execFileSync('python3',['-c',`from openpyxl import Workbook\nfrom openpyxl.styles import Font,PatternFill\nfrom openpyxl.comments import Comment\nimport sys\nw=Workbook();s=w.active;s.title='طلبات 2027';s['H9']='0012';s['H9'].font=Font(strike=True,color='FF123456');s['H9'].fill=PatternFill('solid',fgColor='FFFFFF00');s['H9'].comment=Comment('Reference only, not a requested change','author');s['J13']='=1/10';s['J13'].number_format='0%';w.create_sheet('Extra guidance').sheet_state='hidden';w.save(sys.argv[1])`,join(f.root,'original.xlsx')]);
+ const job=JSON.parse(await readFile(join(f.root,'job.json')));job.sha256=createHash('sha256').update(await readFile(join(f.root,'original.xlsx'))).digest('hex');await writeFile(join(f.root,'job.json'),JSON.stringify(job));
+ const r=f.run('index');assert.equal(r.status,0,r.stderr);assert.equal(r.json.sheets[0].name,'طلبات 2027');assert.equal(r.json.sheets[1].visibility,'hidden');
+ const full=JSON.parse(await readFile(join(f.root,r.json.evidence))),cell=full.cells.find(c=>c.cell==='H9');assert.equal(cell.value,'0012');
+ assert.match(full.styles[cell.styleId].font,/strike/);assert.match(full.styles[cell.styleId].fill,/FFFFFF00/);
+ assert.equal(full.cells.find(c=>c.cell==='J13').value,'=1/10');
+ const view=f.run('cell','--sheet','طلبات 2027','--cell','H9');assert.equal(view.status,0,view.stderr);assert.match(view.json.jsonText,/Reference only/);assert.match(view.json.jsonText,/strike/);
+ assert.notEqual(f.run('cells','--sheet','Arbitrary RR').status,0);
+});
+test('explicit local field comparisons preserve exact text, numeric and boolean semantics',async t=>{
+ const f=await fixture(t);
+ execFileSync('python3',['-c',`from openpyxl import load_workbook\nimport sys\nw=load_workbook(sys.argv[1]);s=w.active;s['F2']=12.5;s['F2'].number_format='$0.00';s['H2']=True;w.save(sys.argv[1])`,join(f.root,'original.xlsx')]);
+ const job=JSON.parse(await readFile(join(f.root,'job.json')));job.sha256=createHash('sha256').update(await readFile(join(f.root,'original.xlsx'))).digest('hex');await writeFile(join(f.root,'job.json'),JSON.stringify(job));
+ const row={...f.receipt.result[0],name:'Original',price:{amount:12.5},enabled:true};
+ const compare=()=>f.run('compare-codes','--sheet','Arbitrary RR','--start-row','2','--end-row','2','--compare-fields',JSON.stringify({A:'name',F:'price.amount',H:'enabled'}));
+ await writeFile(join(f.root,'receipts/api-one.json'),JSON.stringify({...f.receipt,result:[row]}));
+ const equal=compare();assert.equal(equal.status,0,equal.stderr);assert.equal(equal.json.counts['existing-identity'],1);assert.deepEqual(equal.json.exceptions,[]);
+ let full=JSON.parse(await readFile(join(f.root,equal.json.comparison)));assert.ok(full.rows[0].fieldChecks.every(c=>c.status==='equal-value'));assert.equal(full.rows[0].requirementsSatisfied,null);
+ await writeFile(join(f.root,'receipts/api-one.json'),JSON.stringify({...f.receipt,startedAt:'2026-02-01',result:[{...row,name:'Original ',price:{amount:'12.5'},enabled:1}]}));
+ const mismatch=compare();assert.equal(mismatch.status,0,mismatch.stderr);assert.equal(mismatch.json.counts['fields-need-review'],1);assert.equal(mismatch.json.exceptions[0].fieldIssues.length,3);
+ full=JSON.parse(await readFile(join(f.root,mismatch.json.comparison)));const amount=full.rows[0].fieldChecks.find(c=>c.field==='price.amount');assert.equal(amount.required.value,12.5);assert.equal(amount.required.numberFormat,'$0.00');assert.equal(amount.saved,'12.5');
+ assert.notEqual(mismatch.json.comparison,equal.json.comparison,'new receipt state is never cached as old comparison');
+});
+test('blank, formula and unavailable fields require review; invalid mappings never infer defaults',async t=>{
+ const f=await fixture(t);
+ execFileSync('python3',['-c',`from openpyxl import load_workbook\nimport sys\nw=load_workbook(sys.argv[1]);w.active['F2']='=1/10';w.save(sys.argv[1])`,join(f.root,'original.xlsx')]);
+ const job=JSON.parse(await readFile(join(f.root,'job.json')));job.sha256=createHash('sha256').update(await readFile(join(f.root,'original.xlsx'))).digest('hex');await writeFile(join(f.root,'job.json'),JSON.stringify(job));
+ const result=f.run('compare-codes','--sheet','Arbitrary RR','--start-row','2','--end-row','5','--compare-fields',JSON.stringify({A:'absent',G:'name',B:'code',F:'amount'}));assert.equal(result.status,0,result.stderr);
+ assert.equal(result.json.counts['fields-need-review'],1);assert.equal(result.json.counts['formula-needs-review'],1);
+ const full=JSON.parse(await readFile(join(f.root,result.json.comparison)));assert.equal(full.rows[0].fieldChecks[0].status,'unavailable');assert.equal(full.rows[0].fieldChecks[1].status,'unspecified');assert.equal(full.rows[0].fieldChecks[1].required,null);assert.equal(full.rows[0].fieldChecks[3].status,'formula-needs-review');
+ for(const mapping of ['[]','{"A":3}','{"A":"items[0]"}','{"XFE":"name"}','{"a":"name"}','not-json'])assert.notEqual(f.run('compare-codes','--sheet','Arbitrary RR','--compare-fields',mapping).status,0);
+ assert.ok(full.rows.every(r=>r.requirementsSatisfied===null));
+});
+test('large local comparisons print exceptions only while retaining every source and value',async t=>{
+ const f=await fixture(t);
+ execFileSync('python3',['-c',`from openpyxl import Workbook\nimport sys\nw=Workbook();s=w.active;s.title='Changed layout';s.append(['Notes','Price','Code','Required name'])\nfor i in range(400): s.append(['Reference',i,'CODE-'+str(i),'Name '+str(i)])\nw.save(sys.argv[1])`,join(f.root,'original.xlsx')]);
+ const job=JSON.parse(await readFile(join(f.root,'job.json')));job.sha256=createHash('sha256').update(await readFile(join(f.root,'original.xlsx'))).digest('hex');await writeFile(join(f.root,'job.json'),JSON.stringify(job));
+ const rows=Array.from({length:400},(_,i)=>({id:'id-'+i,code:'CODE-'+i,name:i===399?'Different':'Name '+i,amount:i}));
+ await writeFile(join(f.root,'receipts/api-one.json'),JSON.stringify({...f.receipt,result:rows}));
+ const r=f.run('compare-codes','--sheet','Changed layout','--column','C','--start-row','2','--compare-fields',JSON.stringify({B:'amount',D:'name'}));assert.equal(r.status,0,r.stderr);
+ assert.equal(r.json.comparedRows,400);assert.equal(r.json.counts['existing-identity'],399);assert.equal(r.json.counts['fields-need-review'],1);assert.equal(r.json.exceptions[0].source,'Changed layout!C401');assert.ok(r.stdout.length<2500);
+ const full=JSON.parse(await readFile(join(f.root,r.json.comparison)));assert.equal(full.rows.length,400);assert.equal(full.rows[0].fieldChecks[0].required.value,0);assert.equal(full.rows[399].fieldChecks[1].saved,'Different');
+ assert.ok(full.rows.every(r=>r.requirementsSatisfied===null));
 });
 
 async function auditFixture(t){

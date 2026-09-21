@@ -17,7 +17,8 @@ async function fixture(currentUrl = list, ownership = "AGENT") {
   const dir = await mkdtemp(join(tmpdir(), "cvent-navigation-"));
   const path = join(dir, "runtime.json");
   await writeFile(path, JSON.stringify({ ...runtime, ownership }));
-  const client = { setExternalSink() {}, async request(method) {
+  const client = { setExternalSink() {}, async request(method, params) {
+    if (method === 'Runtime.evaluate' && params?.expression?.endsWith('().pending')) return { result: { value: false } };
     if (method === "Target.getTargets") return { targetInfos: [{ type: "page", targetId: "target", url: currentUrl }] };
     return { result: { value: "Save" } };
   } };

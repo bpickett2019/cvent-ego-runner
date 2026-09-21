@@ -52,9 +52,9 @@ test('reset refuses live jobs, live native processes and unknown spending', t =>
   }
   f.save(f.record); assert.throws(() => resetRunBudget(f.jobs, ''), /authorization/);
 });
-test('malformed or linked credit files fail closed; no automatic reset on exhaustion', t => {
+test('costs above former threshold remain tracked; malformed or linked credit files fail closed', t => {
   const f = fixture(t), path = join(f.root, 'budget-reset.json');
-  f.save({ ...f.record, piCostUSD: 50 }); assert.throws(f.history, /Cumulative event spending/);
+  f.save({ ...f.record, piCostUSD: 500 }); assert.equal(f.history().priorEventCostUSD, 500); assert.equal(f.history().spendingLimitEnabled, false);
   for (const value of ['bad JSON', JSON.stringify({ version: 1, id: 'x', credits: { old: -1 } }), JSON.stringify({ version: 1, id: 'x', credits: [] })]) {
     writeFileSync(path, value); assert.throws(f.history);
   }

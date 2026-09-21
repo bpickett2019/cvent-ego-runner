@@ -23,13 +23,14 @@ function fixture(options = {}) {
       assert.equal(init.redirect, "error"); requests.push({ method, path: url.pathname });
       if (url.pathname.endsWith("/oauth2/token")) return json({ access_token: "test-token" });
       assert.equal(new Headers(init.headers).get("authorization"), "Bearer test-token");
+      if (url.pathname.endsWith('/discounts/agenda-items')) return json({ data: [] });
       if (["PUT", "POST"].includes(method)) {
         assert.equal(intent, true, "intent must precede network mutation");
-        assert.equal(url.pathname, `/ea/events/${eventId}/discounts${method === "PUT" ? `/${discountId}` : ""}`);
+        assert.equal(url.pathname, `/ea/events/${eventId}/discounts${method === "PUT" ? `/${rows[0].id}` : ""}`);
         const body = JSON.parse(init.body); writes.push({ method, body });
         if (options.writeError) return json({ message: "Denied" }, options.writeError);
         if (options.transportError) throw new Error("lost response");
-        pending = method === "PUT" ? { ...rows.find(r => r.id === discountId), ...body, capacity: { ...rows[0].capacity, ...body.capacity }, lastModified: "2026-02-01" } : { ...body, id: otherId, level: "EVENT", capacity: { ...body.capacity, used: 0 } };
+        pending = method === "PUT" ? { ...rows[0], ...body, capacity: { ...rows[0].capacity, ...body.capacity }, lastModified: "2026-02-01" } : { ...body, id: otherId, level: "EVENT", capacity: { ...body.capacity, used: 0 } };
         Object.assign(pending, options.changedFields);
         return json(options.badAck ? {} : { ...pending, id: options.ackId ?? pending.id }, 201);
       }
@@ -44,6 +45,7 @@ function fixture(options = {}) {
         return json({ data: rows.filter(r => r.id === pending?.id) });
       }
       scans++;
+      if (pending && writes.at(-1)?.method === 'PUT' && ++polls > (options.stalePolls ?? 1)) rows = [...rows.filter(r => r.id !== pending.id), pending];
       if (scans === 2 && options.concurrent) rows = options.concurrent(rows);
       if (pending && options.duplicateAfterWrite && polls > 0) return json({ data: [...rows, { ...pending, id: "44444444-4444-4444-4444-444444444444" }] });
       return json({ data: rows });
@@ -58,13 +60,12 @@ test("discount capabilities include safe reads and one explicit configure operat
   assert.equal(CAPABILITIES.configureDiscount, "api-write");
   assert.equal(CAPABILITIES.deleteDiscount, undefined);
 });
-test("existing code differences require creation, never silent reuse or an overwrite", async () => {
-  const f = fixture(); const result = await f.run({ code: "existing", patch, createIfMissing: true });
-  assert.equal(result.action, "creation-required");
-  assert.match(result.limitation, /cannot create a second object with this identity/); assert.equal(result.requirementsSatisfied, false);
-  assert.deepEqual(result.differences, ["note", "code"]);
-  assert.deepEqual(result.saved, baseline());
-  assert.equal(f.writes.length, 0); assert.equal(f.evidence.length, 0); assert.equal(f.polls, 0);
+test("existing event code updates preserve unrelated fields; exact spelling cannot be substituted", async () => {
+  const f = fixture(); await assert.rejects(f.run({ code: "existing", patch, createIfMissing: true }), /Exact RR identity/);
+  assert.equal(f.writes.length, 0);
+  const result = await f.run(); assert.equal(result.action, 'updated'); assert.equal(result.requirementsSatisfied, true);
+  assert.deepEqual(result.saved, { ...baseline(), note: 'Requested', lastModified: '2026-02-01' });
+  assert.equal(f.writes.length, 1); assert.equal(f.writes[0].method, 'PUT');
 });
 test("already-satisfied discounts are verified no-ops without intent or mutation", async () => {
   const f = fixture(); const r = await f.run({ code: "EXISTING", patch: { note: "Original" } });
@@ -84,8 +85,8 @@ test("missing codes only create with explicit opt-in and complete fields; succes
   assert.deepEqual(f.evidence.filter(e => e.phase === "READBACK").map(e => e.matched), [false, true]);
   assert.equal((await f.run(input)).action, "unchanged"); assert.equal(f.writes.length, 1);
   const changed = await f.run({ ...input, patch: { note: "A later conflicting requirement" } });
-  assert.equal(changed.action, "creation-required"); assert.equal(changed.requirementsSatisfied, false);
-  assert.equal(f.writes.length, 1, 'even a code created in this run must not be overwritten');
+  assert.equal(changed.action, "updated"); assert.equal(changed.requirementsSatisfied, true);
+  assert.equal(f.writes.length, 2, 'a verified event-only code may be updated later');
   for (const bad of [{ code: "NEW", patch }, { code: "NEW", patch, createIfMissing: true }]) {
     const denied = fixture({ rows: [] }); await assert.rejects(denied.run(bad)); assert.equal(denied.writes.length, 0);
   }

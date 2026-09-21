@@ -13,7 +13,7 @@ const target = { apiEventId: id, name: "Approved Event" };
 const writeTarget = { ...target, name: "(C+D) Approved Event" };
 const baseline = () => ({ id, title: writeTarget.name, status: "Pending", format: "In-person", timezone: "America/New_York", type: "Conference", languages: ["en-US"], planners: [{ firstName: "A", lastName: "Planner" }], capacity: 10, note: "Original", closeAfter: "2030-01-01T00:00:00.000Z", archiveAfter: "2031-01-01T00:00:00.000Z", customFields: [{ id: "preserved" }], lastModified: "2026-01-01T00:00:00.000Z" });
 const response = value => new Response(JSON.stringify(value), { status: 200 });
-function api(options = {}) { return new CventConnection({ credentials: async () => credentials, intervalMs: 0, ...options }); }
+function api(options = {}) { return new CventConnection({ credentials: async () => credentials, intervalMs: 0, discountPollDelaysMs: [0, 1, 2], sleeper: async () => {}, fetcher: async () => { throw new Error('Unmocked network forbidden'); }, ...options }); }
 
 test("API credentials fail closed without secret values and require a Cvent HTTPS endpoint", async () => {
   await assert.rejects(loadCredentials({}), /credentials are not configured/);
@@ -62,7 +62,12 @@ test("reused client fetch is restricted to this event and excludes publish/delet
   let scoped, calls = 0;
   const connection = api({ clientFactory: async (_credentials, fetcher) => { scoped = fetcher; return {}; }, fetcher: async () => { calls++; return response({}); } });
   await connection.client(id);
-  for (const [path, method] of [[`/events/${other}`, "GET"], [`/events/${id}/features/Website/launch`, "POST"], [`/events/${id}`, "DELETE"], [`/events/${id}`, "PATCH"], ["/emails", "POST"]]) {
+  for (const [path, method] of [
+    [`/events/${other}`, "GET"], [`/events/${id}/features/Website/launch`, "POST"],
+    [`/events/${id}`, "DELETE"], [`/events/${id}`, "PATCH"], [`/events/${id}`, "PUT"],
+    [`/events/${id}/registration-types/${other}`, "PUT"], [`/events/${id}/custom-fields/${other}/answers`, "PUT"],
+    ["/emails", "POST"],
+  ]) {
     await assert.rejects(scoped(credentials.baseUrl + path, { method }), /scope/);
   }
   await assert.rejects(scoped(`https://attacker.example/ea/events/${id}`), /endpoint/);
@@ -75,7 +80,7 @@ const collectionRoutes = {
   listRegistrationPaths: [`/events/${id}/registration-paths`, false],
   listRegistrationTypes: [`/events/${id}/registration-types`, false],
   listQuestions: ["/event-questions", true],
-  listSessions: ["/sessions", true],
+
   listFees: [`/events/${id}/fee-items`, false],
   listVouchers: [`/events/${id}/vouchers`, false],
   listDiscounts: [`/events/${id}/discounts`, false],
@@ -191,17 +196,19 @@ test("API write records intent before mutation and requires authoritative readba
   const calls = []; let saved = false;
   const connection = api({ clientFactory: async () => ({
     getEvent: async () => { calls.push("read"); return { ...baseline(), capacity: saved ? 50 : 10 }; },
-    updateEventBasics: async (_id, body) => { calls.push("write"); assert.equal(body.closeAfter, baseline().closeAfter); assert.equal(body.archiveAfter, baseline().archiveAfter); saved = true; },
-  }) });
+  }), fetcher: async (url, init) => {
+    if (String(url).endsWith('oauth2/token')) return response({ access_token: 'dummy' });
+    calls.push('write'); const body = JSON.parse(init.body); assert.equal(body.closeAfter, baseline().closeAfter); assert.equal(body.archiveAfter, baseline().archiveAfter); saved = true; return response({ ...baseline(), capacity: 50 });
+  } });
   const result = await connection.execute(writeTarget, "updateEvent", { capacity: 50 }, async () => calls.push("intent"));
-  assert.deepEqual(calls, ["read", "read", "intent", "write", "read"]);
+  assert.deepEqual(calls, ["read", "read", "intent", "read", "write", "read", "read"]);
   assert.equal(result.verified, true);
   assert.equal(result.method, "PUT");
   await assert.rejects(connection.execute(writeTarget, "updateEvent", { status: "Active" }), /prohibited/);
-  const stale = api({ clientFactory: async () => ({ getEvent: async () => baseline(), updateEventBasics: async () => {} }) });
+  const stale = api({ clientFactory: async () => ({ getEvent: async () => baseline() }), fetcher: async url => response(String(url).endsWith('oauth2/token') ? { access_token: 'dummy' } : baseline()) });
   await assert.rejects(stale.execute(writeTarget, "updateEvent", { capacity: 50 }), /did not verify/);
 });
-test("event PUT merges fresh fields without permitting scheduling, renaming or guard bypass", () => {
+test("event PUT merges fields, permits deadline changes but not archive/rename/guard bypass", () => {
   const before = baseline();
   const body = buildEventUpdate(before, { note: "Test" });
   assert.equal(body.note, "Test");
@@ -211,7 +218,8 @@ test("event PUT merges fresh fields without permitting scheduling, renaming or g
   assert.equal(body.status, undefined);
   body.planners[0].firstName = "Changed";
   assert.equal(before.planners[0].firstName, "A");
-  for (const changes of [{}, [], { closeAfter: before.closeAfter }, { archiveAfter: before.archiveAfter }, { launchAfter: null }, { status: "Active" }]) assert.throws(() => buildEventUpdate(before, changes), /prohibited/);
+  assert.equal(buildEventUpdate(before, { closeAfter: before.closeAfter }).closeAfter, before.closeAfter);
+  for (const changes of [{}, [], { archiveAfter: before.archiveAfter }, { launchAfter: null }, { status: "Active" }]) assert.throws(() => buildEventUpdate(before, changes), /prohibited/);
   assert.throws(() => buildEventUpdate(before, { title: "(C+D) Renamed" }), /existing event title/);
   assert.throws(() => buildEventUpdate({ ...before, title: target.name }, { note: "Test" }), /only \(C\+D\)/);
   assert.throws(() => buildEventUpdate({ ...before, planners: undefined }, { note: "Test" }), /required PUT fields/);
@@ -257,7 +265,7 @@ test("installed clients use PUT (not PATCH), preserve scheduling and independent
     const result = await connection.execute(writeTarget, operation, { note: "Test" }, async () => { intent = true; });
     assert.equal(result.verified, true);
     assert.equal(result.saved.note, "Test");
-    assert.equal(result.write.receipt.method, "PUT");
+    assert.equal(result.method, "PUT");
     assert.equal(requests.filter(request => request.method === "PUT").length, 1);
     assert.equal(requests.at(-1).method, "GET");
     assert.ok(!requests.some(request => request.method === "PATCH"));
@@ -289,8 +297,8 @@ test("installed registration-type client writes scoped capacity and verifies rea
   } });
   const result = await connection.execute(writeTarget, "updateRegistrationType", { registrationTypeId: other, patch: { openForRegistration: true, capacity: { total: 101 } } }, async () => { intent = true; });
   assert.equal(puts, 1);
-  assert.equal(result.receipt.method, "PUT");
-  assert.equal(result.polls.at(-1).matched, true);
+  assert.equal(result.method, "PUT");
+  assert.equal(result.verified, true);
   assert.equal((await connection.execute(writeTarget, "listRegistrationTypes"))[0].capacity.total, 101);
 });
 test("installed custom-field client PUTs an identified field and verifies saved values", async () => {
@@ -306,11 +314,9 @@ test("installed custom-field client PUTs an identified field and verifies saved 
     state = { ...state, customFields: [{ ...field, value: ["Test"] }] };
     return response(state.customFields[0]);
   } });
-  const result = await connection.execute(writeTarget, "updateEventCustomFieldAnswers", { fields: [{ ...field, value: ["Test"] }] }, async () => { intent = true; });
-  assert.equal(puts, 1);
-  assert.equal(result.fields[0].verified, true);
-  assert.equal(result.fields[0].write.method, "PUT");
-  assert.deepEqual((await connection.execute(writeTarget, "getEvent")).customFields[0].value, ["Test"]);
+  await assert.rejects(connection.execute(writeTarget, "updateEventCustomFieldAnswers", { fields: [{ ...field, value: ["Test"] }] }, async () => { intent = true; }), /Integration identifiers/);
+  assert.equal(puts, 0); assert.equal(intent, false);
+  assert.deepEqual(state.customFields[0].value, ["Original"]);
 });
 test("API guards block wrong identity, published targets and unknown methods without writes", async () => {
   let writes = 0;

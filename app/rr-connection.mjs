@@ -7,7 +7,7 @@ import { RUN_POLICY, executionPrompt } from "./run-policy.mjs";
 import { assertProcessGone, eventHistory } from "./event-history.mjs";
 import { publicEvent, activitySummary } from "./public-events.mjs";
 import { revokeJobBrowser } from "./browser-ownership.mjs";
-import { BrowserFailureGuard } from "./browser-failure-guard.mjs";
+import { BrowserFailureGuard, hasBrowserSaveUncertainty } from "./browser-failure-guard.mjs";
 import { stopJobBrowser } from "./clean-browser.mjs";
 import { budgetTotals } from "./budget.mjs";
 
@@ -26,7 +26,7 @@ export function reportedCompletion(workspace, eventId) {
     const stat = statSync(path);
     if (!stat.isFile() || stat.size > 1_000_000) return "INCOMPLETE";
     const report = read(path);
-    if (["api-write-uncertain.json", "api-operation.lock", "operation.lock"].some(file => existsSync(join(workspace, file)))) return "INCOMPLETE";
+    if (["api-write-uncertain.json", "browser-save-uncertain.json", "api-operation.lock", "operation.lock"].some(file => existsSync(join(workspace, file)))) return "INCOMPLETE";
     const unresolvedPath = join(realpathSync(workspace), "unresolved-changes.json");
     if (existsSync(unresolvedPath)) {
       if (realpathSync(unresolvedPath) !== unresolvedPath || statSync(unresolvedPath).size > 1_000_000) return "INCOMPLETE";
@@ -143,6 +143,12 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
       job.record.sessionPrepared = false;
       job.record.finishedAt = new Date().toISOString();
       job.record.phase = "SETTLED";
+      // A marker can arrive during asynchronous settlement/remote cleanup too.
+      if (hasBrowserSaveUncertainty(job.workspace)) {
+        job.tools.add("browser-save-uncertain");
+        if (!job.record.browserFailureGuard?.executionUncertain) job.record.browserFailureGuard = new BrowserFailureGuard().observe(null, Date.now(), { saveUncertain: true });
+        if (job.finishedNormally) job.record.stopReason = job.record.browserFailureGuard.stopReason;
+      }
       job.record.unresolvedChanges = [...job.tools];
       if (existsSync(join(job.workspace, "api-write-uncertain.json"))) job.record.apiUnresolved = read(join(job.workspace, "api-write-uncertain.json"));
       job.record.status = job.finishedNormally && !failures.length && !job.record.spendingUnreconciled && !job.record.apiUnresolved && !job.tools.size
@@ -170,6 +176,17 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     })();
     return job.stopping;
   }
+  function checkBrowserFailure(job, event = { type: "uncertainty_check" }) {
+    if (active !== job || job.record.phase !== "EXECUTING" || job.stopping) return false;
+    job.browserFailureGuard ||= new BrowserFailureGuard();
+    const failure = job.browserFailureGuard.observe(event, Date.now(), { saveUncertain: hasBrowserSaveUncertainty(job.workspace) });
+    if (!failure) return false;
+    job.record.browserFailureGuard = failure;
+    if (failure.executionUncertain) job.tools.add(event.toolCallId || "browser-save-uncertain");
+    ledger(job);
+    if (failure.tripped) { void stop(job, failure.stopReason); return true; }
+    return false;
+  }
   async function prepareSession(job) {
     const { record, workspace } = job;
     if (job.rpc) throw new Error("This run already has a Pi process; no replacement or replay");
@@ -193,19 +210,8 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
         if (event.type === "tool_execution_end") {
           job.tools.delete(event.toolCallId);
           if (event.isError) { record.toolErrors = [...(record.toolErrors || []), { toolCallId: event.toolCallId, toolName: event.toolName, at: new Date().toISOString() }]; ledger(job); }
-          if (active === job && record.phase === "EXECUTING" && !job.stopping) {
-            job.browserFailureGuard ||= new BrowserFailureGuard();
-            const failure = job.browserFailureGuard.observe(event);
-            if (failure) {
-              record.browserFailureGuard = failure;
-              // Native process exit cannot prove that remote page execution ended.
-              // Retain this run's uncertainty; stop it without replay or false DONE.
-              if (failure.executionUncertain) job.tools.add(event.toolCallId || "browser-execution-uncertain");
-              ledger(job);
-              if (failure.tripped) void stop(job, failure.stopReason);
-            }
-          }
         }
+        if (["tool_execution_start", "tool_execution_end", "agent_settled"].includes(event.type)) checkBrowserFailure(job, event);
         if (event.type === "agent_settled" && active === job && !job.stopping) void settle(job).catch(error => stop(job, error.message));
       });
       const session = await job.rpc.freshSession();
@@ -304,7 +310,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
       priorEventCostUSD: budgetTotals(jobsRoot, prior).spentUSD, executionPolicy: RUN_POLICY.executionPolicy,
       status: "RUNNING", phase: "BROWSER_STARTING", startedAt: new Date().toISOString() });
     record.totalEventCostUSD = record.priorEventCostUSD;
-    if (record.totalEventCostUSD >= record.allowanceUSD - record.externalCostReserveUSD) throw new Error("Cumulative spending threshold reached");
+    record.spendingLimitEnabled = false;
     const job = { workspace: record.workspace, record, clients: new Set(), tools: new Set(), seq: 0 };
     active = job; busy = true;
     try {
@@ -368,9 +374,9 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
   }
   function monitor(job) {
     clearInterval(job.timer);
-    job.timer = setInterval(() => { void costs(job).then(() => {
-      if (job.record.totalEventCostUSD >= job.record.allowanceUSD - job.record.externalCostReserveUSD) return stop(job, "Cumulative spending threshold reached");
-    }).catch(error => stop(job, error.message)); }, 2000);
+    job.timer = setInterval(() => {
+      if (!checkBrowserFailure(job) && !job.stopping) void costs(job).catch(error => stop(job, error.message));
+    }, 2000);
   }
   function waiting(job, kind, message) {
     if (job.stopping || active !== job) return;
@@ -391,12 +397,12 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     return returnBeforeAI(job, req, res);
   }));
   async function settle(job) {
-    if (job.settling) return;
+    if (job.settling || checkBrowserFailure(job)) return;
     job.settling = true; clearInterval(job.timer);
     await costs(job);
-    if (job.stopping) return;
+    if (job.stopping || checkBrowserFailure(job)) return;
     const result = (await job.rpc.request({ type: "get_last_assistant_text" })).data;
-    if (job.stopping) return;
+    if (job.stopping || checkBrowserFailure(job)) return;
     job.record.lastAssistantText = typeof result.text === "string" ? result.text.slice(0, 20000) : "";
     job.finishedNormally = true;
     await stop(job, "Native execution ended; new runs use fresh sessions");
@@ -414,7 +420,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     const command = { type };
     if (["steer", "follow_up"].includes(type)) {
       if (typeof message !== "string" || !message.trim() || message.length > 10_000 || message.trimStart().startsWith("/")) throw new Error("Expected bounded plain-text job instruction");
-      command.message = `Within the existing approved SOW, event and cumulative budget only:\n${message}`;
+      command.message = `Within the existing approved SOW and selected event only:\n${message}`;
     }
     res.json(await job.rpc.request(command));
   }));
@@ -437,7 +443,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     res.set("Cache-Control", "no-store").sendFile(file);
   }));
   return {
-    budget: () => ({ ...budgetTotals(jobsRoot, records()), allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD }),
+    budget: () => ({ ...budgetTotals(jobsRoot, records()), spendingLimitEnabled: false, allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD }),
     isBusy: () => busy || !!active,
     stop: () => { controlEpoch++; return active ? stop(active, "Control returned to operator") : Promise.resolve(); },
     shutdown: async () => { closing = true; if (active) await stop(active, "Connection shutting down"); },

@@ -67,13 +67,13 @@ test("volume initial item configuration shares inactive creation/link/finalize p
   const result = await f.run(data); assert.equal(result.initialConfigurationComplete, true); assert.equal(result.saved.active, true);
   assert.deepEqual(f.writes.map(w => w.phase), ["create", "link", "finalize"]); assert.equal(f.writes[0].body.active, false);
   assert.equal((await f.run(data)).action, "unchanged");
-  const difference = await f.run(input()); assert.equal(difference.requirementsSatisfied, false); assert.deepEqual(difference.differences, ["agendaItems"]);
+  const difference = await f.run(input()); assert.equal(difference.requirementsSatisfied, true); assert.deepEqual(difference.differences, []);
   assert.equal(f.writes.length, 3);
 });
-test("existing volume differences never mutate or masquerade as satisfaction", async () => {
+test("existing event volume differences use a verified update, not duplicate creation", async () => {
   const f = fixture({ row: existing() }), data = input(); data.patch.method.value = 25;
-  const result = await f.run(data); assert.equal(result.action, "creation-required"); assert.equal(result.requirementsSatisfied, false);
-  assert.deepEqual(result.differences, ["method"]); assert.deepEqual(f.row, existing()); assert.equal(f.writes.length, 0);
+  const result = await f.run(data); assert.equal(result.action, "updated"); assert.equal(result.requirementsSatisfied, true);
+  assert.equal(f.row.method.value, 25); assert.equal(f.writes.length, 1); assert.equal(f.writes[0].method, 'PUT');
 });
 test("volume identity collisions, incomplete catalogs and drift fail before intent", async () => {
   for (const options of [{ row: existing(), duplicate: true }, { row: { ...existing(), level: "ACCOUNT" } }, { row: { ...existing(), type: "DISCOUNT_CODE", code: "GROUP" } }, { row: { ...existing(), name: null } }, { concurrent: true }, { badLinks: true }, { event: { status: "Active" } }, { event: { title: "Wrong target" } }]) {

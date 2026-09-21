@@ -28,6 +28,20 @@ test('DONE requires explicit verified website, registration, dependencies and Dr
   f.save(complete()); assert.equal(reportedCompletion(f.workspace, undefined), 'INCOMPLETE');
 });
 
+test('event-build DONE needs no project acceptance fields; exclusions never override an in-scope gap', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.workspace, 'reports/final-report.md'), '# Exclusions\nAzure deployment, M365 sign-in and a stand-alone onsite scanner request are outside this event-build SOW.\n');
+  // Pi makes the semantic scope decision. The wrapper does not parse Markdown,
+  // filter blockers, demand project-delivery flags or add a continuation prompt.
+  f.save(complete()); assert.equal(f.result(), 'DONE');
+  for (const key of ['blockers', 'untested']) {
+    f.save({ ...complete(), [key]: ['RR-required registration path not connected'] });
+    assert.equal(f.result(), 'INCOMPLETE');
+  }
+  f.save({ ...complete(), completion: { ...complete().completion, draft: false } });
+  assert.equal(f.result(), 'INCOMPLETE');
+});
+
 test('blockers, untested work and explicit uncertainty cannot be labeled DONE', t => {
   const f = fixture(t);
   for (const key of ['blockers', 'untested']) {
@@ -39,7 +53,7 @@ test('blockers, untested work and explicit uncertainty cannot be labeled DONE', 
     f.save({ ...complete(), uncertainWrites }); assert.equal(f.result(), 'INCOMPLETE');
   }
   f.save(complete());
-  for (const name of ['api-write-uncertain.json', 'api-operation.lock', 'operation.lock']) {
+  for (const name of ['api-write-uncertain.json', 'browser-save-uncertain.json', 'api-operation.lock', 'operation.lock']) {
     const p = join(f.workspace, name); writeFileSync(p, '{}'); assert.equal(f.result(), 'INCOMPLETE'); rmSync(p);
   }
   const p = join(f.workspace, 'unresolved-changes.json');

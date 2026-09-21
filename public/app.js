@@ -131,9 +131,10 @@ async function refresh() {
       : job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
     $("agentReply").textContent = executing ? "" : job?.lastAssistantText || job?.intake?.summary || "";
     $("question").textContent = job?.lastAssistantText || "";
+    const spendingMode = runtime.budget?.spendingLimitEnabled === false ? "no spending stop" : "spending guard active";
     $("cost").textContent = runtime.budget?.resetId && !active()
-      ? `${money(runtime.budget.spentUSD)} used since reset · ${money(runtime.budget.allowanceUSD)} per-event allowance (${money(runtime.budget.externalCostReserveUSD)} reserved)${job ? ` · ${money(job.piCostUSD)} historical selected run` : ""}`
-      : job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending` : "No current run · prior spending retained";
+      ? `${money(runtime.budget.spentUSD)} tracked since reset · ${spendingMode}${job ? ` · ${money(job.piCostUSD)} selected run` : ""}`
+      : job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending · ${spendingMode}` : `No current run · prior spending retained · ${spendingMode}`;
     $("results").hidden = !job; if (job) $("results").href = `/api/jobs/${job.id}/results/final-report.md`;
     const entries = Array.isArray(jobs) ? [...jobs] : [];
     if (job && !entries.some(item => item.id === job.id)) entries.unshift(job);
@@ -145,8 +146,12 @@ async function refresh() {
     $("completionTitle").textContent = count ? "Agent-reported progress" : "No completed work reported";
     $("completionCount").textContent = `${count} reported checkpoints · not independent acceptance`;
     $("progressLists").hidden = !count && !list(progress.pending).length;
-    const elapsed = job?.startedAt ? Math.max(0, Math.floor(((active() ? Date.now() : Date.parse(job.finishedAt || job.updatedAt || job.startedAt)) - Date.parse(job.startedAt)) / 1000)) : 0;
+    const executionStart = job?.aiStartedAt || (job?.workflow !== "login-first" ? job?.startedAt : null);
+    const executionEnd = active() ? Date.now() : Date.parse(job?.finishedAt || job?.updatedAt || executionStart);
+    const seconds = Math.floor((executionEnd - Date.parse(executionStart)) / 1000);
+    const elapsed = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
     $("elapsed").textContent = [Math.floor(elapsed / 3600), Math.floor(elapsed / 60) % 60, elapsed % 60].map(value => String(value).padStart(2, "0")).join(":");
+    $("elapsedLabel").textContent = job?.aiStartedAt ? "AI execution · target ~90 min (not a cutoff)" : executionStart ? "Historical duration · includes setup" : "AI execution · starts after verified Return";
     [!!job || !!workbook, !!job?.intake, verified, job?.phase === "EXECUTING"].forEach((done, i) => $(`step${i + 1}`).classList.toggle("done", done));
     if (job?.waitingFor === "setup" && active()) $("browserDetails").open = true;
     renderControls();

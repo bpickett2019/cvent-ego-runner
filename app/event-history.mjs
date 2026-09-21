@@ -32,6 +32,5 @@ export function eventHistory(jobsRoot, currentId, target, policy) {
     if (Number.isFinite(record.externalCostReserveUSD)) externalCostReserveUSD = Math.max(externalCostReserveUSD, record.externalCostReserveUSD);
     evidence.push({ jobId: record.id, status: record.status, sessionCostUSD: record.piCostUSD, sourceSha256: record.sha256, receipts: join(workspace,'receipts'), ...(existsSync(join(workspace,'reports/final-report.json')) ? { report: join(workspace,'reports/final-report.json') } : {}) });
   }
-  if (priorEventCostUSD >= allowanceUSD - externalCostReserveUSD) throw new Error('Cumulative event spending reached the execution budget; a new upload cannot reset it');
-  return { priorEventCostUSD, allowanceUSD, externalCostReserveUSD, evidence, budgetResetId: budgetTotals(jobsRoot, []).resetId };
+  return { priorEventCostUSD, allowanceUSD, externalCostReserveUSD, spendingLimitEnabled: false, evidence, budgetResetId: budgetTotals(jobsRoot, []).resetId };
 }

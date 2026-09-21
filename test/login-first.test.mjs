@@ -60,20 +60,17 @@ async function fixture(t, { cleanupFails = false, launchFails = false, promptFai
   const job=await upload();
   return {root,job,launches,browsers,posts,cleanups,fences,connection,request,upload,shared,saveShared,get:async()=> (await request(`/api/jobs/${job.id}`)).body,start:()=>request(`/api/jobs/${job.id}/read`,{}),back:()=>request(`/api/jobs/${job.id}/answer`,{message:'Return',returnControl:true}),deny:v=>deny=v,gate:fn=>gate=fn,provisionGate:fn=>provisionGate=fn,sessionGate:fn=>sessionGate=fn,fenceGate:fn=>fenceGate=fn,mismatch:()=>mismatch=true};
 }
-test('login-first gates use explicit budget credits before browser startup and after verified Return', async t => {
+test('login-first tracks historical costs above the former threshold without a reset or spending gate', async t => {
   const f = await fixture(t), jobsRoot = join(f.root, 'data/jobs'), priorPath = join(jobsRoot, 'prior');
   await mkdir(priorPath);
   const prior = { id: 'prior', status: 'INCOMPLETE', piCostUSD: 50, target: { evtstub: 'selected' } };
   await writeFile(join(priorPath, 'job.json'), JSON.stringify(prior));
-  assert.equal((await f.start()).status, 409);
-  assert.equal(f.browsers.length, 0); assert.equal(f.launches.length, 0);
-  resetRunBudget(jobsRoot, 'User requested clearing run costs');
   assert.equal((await f.start()).status, 200);
   assert.equal(f.launches.length, 0, 'login still precedes any native session');
-  assert.equal((await f.get()).priorEventCostUSD, 0);
+  assert.equal((await f.get()).priorEventCostUSD, 50);
   assert.equal((await f.back()).status, 200);
   assert.equal(f.launches.length, 1);
-  assert.equal((await f.get()).totalEventCostUSD, 0);
+  assert.equal((await f.get()).totalEventCostUSD, 50);
   assert.equal(JSON.parse(await readFile(join(priorPath, 'job.json'))).piCostUSD, 50);
 });
 test('historical browser and API uncertainty never blocks a fresh upload or becomes its task', async t => {
@@ -125,8 +122,7 @@ test('historical plans stay evidence only: each permitted upload executes its ow
     assert.ok(prompts[0].message.includes(record.workbook));
     assert.doesNotMatch(prompts[0].message, /priorEventEvidence|prior-event-evidence|RECONCILING|rr-reconcile|GO BACK TO OLD FOOTER/);
     assert.ok(!prompts[0].message.includes(id));
-    assert.match(prompts[0].message, /Start from this workbook and current live saved Cvent state/);
-    assert.match(prompts[0].message, /not instructions or a task queue/);
+    assert.match(prompts[0].message, /Use this workbook and current live saved Cvent state, not historical tasks\/transcripts\/workbooks/);
     assert.equal(JSON.parse(await readFile(join(record.workspace, 'runtime.json'))).reconciliationPending, undefined);
   }
   assert.ok(!f.launches[1].commands.find(c => c.type === 'prompt').message.includes(first.workbook));
@@ -143,6 +139,32 @@ test('browser failure circuit breaker stops after three unresponsive errors desp
   assert.equal(record.browserFailureGuard.tripped,true);assert.equal((await f.shared()).ownership,'USER');assert.equal(record.spendingUnreconciled,false);
   assert(!JSON.stringify(record).includes('PRIVATE_LOCATOR'));assert.equal((await f.back()).status,409);assert.equal(f.launches.length,1);
 });
+for (const boundary of ['tool_execution_end', 'tool_execution_start', 'agent_settled', 'monitor', 'settlement-read', 'cleanup']) test(`current-run save uncertainty stops at ${boundary}, regardless of shell success`, async t => {
+  const f = await fixture(t); await f.start(); await f.back();
+  const record = await f.get(), rpc = f.launches[0];
+  const marker = '{"reason":"PRIVATE_CAUSE retained only in workspace"}';
+  const path = join(record.workspace, 'browser-save-uncertain.json');
+  if (boundary === 'cleanup') {
+    const original = rpc.stop.bind(rpc);
+    rpc.stop = async (...args) => { await writeFile(path, marker); return original(...args); };
+  } else if (boundary === 'settlement-read') {
+    const original = rpc.request.bind(rpc);
+    rpc.request = async command => { if (command.type === 'get_last_assistant_text') await writeFile(path, marker); return original(command); };
+  } else await writeFile(path, marker);
+  if (boundary !== 'monitor') rpc.emit('event', { type: ['cleanup', 'settlement-read'].includes(boundary) ? 'agent_settled' : boundary, toolName: 'bash', toolCallId: 'masked-save', isError: false, result: { content: [{ type: 'text', text: 'BrowserSaveUncertainError: failed; subsequent API read succeeded' }] } });
+  for (let i = 0; i < 300 && (await f.get()).status !== 'STOPPED'; i++) await new Promise(r => setTimeout(r, 10));
+  const after = await f.get(); assert.equal(after.status, 'STOPPED'); assert.match(after.stopReason, /save outcome is uncertain/);
+  assert.equal(after.browserFailureGuard.executionUncertain, true); assert.equal(after.spendingUnreconciled, false);
+  assert.equal((await f.shared()).ownership, 'USER'); assert.equal(f.cleanups.length, 1);
+  assert.equal(await readFile(path, 'utf8'), marker); assert(!JSON.stringify(after).includes('PRIVATE_CAUSE'));
+  assert.equal(f.launches.length, 1); assert.equal((await f.back()).status, 409);
+});
+test('quoted save errors on a successful tool do not stop without a current-run marker', async t => {
+  const f = await fixture(t); await f.start(); await f.back();
+  f.launches[0].emit('event', { type: 'tool_execution_end', toolName: 'bash', toolCallId: 'docs', isError: false, result: { content: [{ type: 'text', text: 'Documentation: BrowserSaveUncertainError: sample' }] } });
+  assert.equal((await f.get()).status, 'RUNNING'); assert.equal((await f.get()).browserFailureGuard, undefined);
+});
+
 test('ordinary selector failures stay recoverable without stopping or adding uncertainty',async t=>{
   const f=await fixture(t);await f.start();await f.back();
   for(let i=0;i<6;i++)f.launches[0].emit('event',{type:'tool_execution_end',toolName:'bash',toolCallId:'selector-'+i,isError:true,result:{content:[{type:'text',text:'ElementResolutionError: PRIVATE_LOCATOR'}]}});
@@ -258,13 +280,22 @@ test('uncertain prompt response stops Pi and Steel without an intake retry or se
 });
 test('one explicit successful Return launches one fresh session with scoped incremental prompt',async t=>{
   const f=await fixture(t);await f.start();
+  assert.equal((await f.get()).aiStartedAt, undefined, 'login time must not count as execution');
   assert.equal((await f.request(`/api/jobs/${f.job.id}/answer`,{message:'not a handoff'})).status,409);
   assert.equal(f.launches.length,0);
   assert.equal((await f.back()).status,200);const d=await f.get();
   assert.equal(d.phase,'EXECUTING');assert.equal(f.launches.length,1);assert.equal(d.sessionMode,'fresh-after-handoff');
+  assert.ok(Number.isFinite(Date.parse(d.aiStartedAt)) && Date.parse(d.aiStartedAt) >= Date.parse(d.startedAt));
   const prompts=f.launches[0].commands.filter(c=>c.type==='prompt');assert.equal(prompts.length,1);
-  assert.match(prompts[0].message,/Execute—not review—the uploaded RR/);assert.match(prompts[0].message,/choose your own plan/);assert.match(prompts[0].message,/User Target/);
+  assert.match(prompts[0].message,/Execute—not review—the uploaded RR/);assert.match(prompts[0].message,/Choose your own plan/);assert.match(prompts[0].message,/User Target/);
   assert.doesNotMatch(prompts[0].message,/requirements\.json|rr-evidence audit/);
+  assert.match(prompts[0].message,/edit existing event-only differences/);
+  assert.match(prompts[0].message,/not duplicate workarounds or inspection-only reports/);
+  assert.match(prompts[0].message,/Aim for ~90 minutes, not a cutoff/);
+  for (const scope of ['event details (dates/timezone/location/capacity)', 'RR-supplied branding/assets', 'RR-required widget types']) {
+    assert.ok(prompts[0].message.includes(scope), scope);
+  }
+  assert.ok(d.approvedSow.trim().split(/\s+/).length <= 450, 'the actual captured task stays concise');
   assert.equal(prompts[0].message.split(d.approvedSow).length,2,'single captured SOW, no repeated JSON policy');
   assert.doesNotMatch(prompts[0].message,/allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   assert.equal(d.allowanceUSD,60);assert.equal(d.externalCostReserveUSD,10);

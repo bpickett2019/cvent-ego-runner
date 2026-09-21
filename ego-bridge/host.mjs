@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readSaveSignals } from "./save-observer.mjs";
 
 const INTERACTIVE_ROLE = /^(button|link|textbox|searchbox|combobox|checkbox|radio|menuitem|option|slider|spinbutton|switch|tab|treeitem)$/i;
 const WRITE_METHOD = /^(Input\.|DOM\.(set|remove)|Page\.navigate|Page\.reload|Target\.(createTarget|closeTarget)|Storage\.(set|clear)|Network\.(set|clear)|Fetch\.continueRequest)/;
@@ -135,6 +136,7 @@ export class SteelEgoHost {
     }
     if (!likelyWrite) return;
     if (existsSync(join(dirname(this.runtimePath), "api-write-uncertain.json"))) throw new Error("GuardrailViolation: an API write is uncertain; browser mutations are blocked until reconciliation");
+    if (existsSync(join(dirname(this.runtimePath), "browser-save-uncertain.json"))) throw new Error("BrowserSaveUncertainError: a browser save is uncertain; further mutations are blocked");
     const forbiddenLabel = FORBIDDEN.test(source) ? source.match(FORBIDDEN)?.[0] : await this.forbiddenUiLabel(envelope);
     if (forbiddenLabel) throw new Error(`GuardrailViolation: prohibited Cvent action detected (${String(forbiddenLabel).slice(0, 120)})`);
 
@@ -142,6 +144,13 @@ export class SteelEgoHost {
     let url;
     try { url = new URL(target.url); } catch { return; }
     if (LOGIN_HOST.test(url.hostname) || (/cvent\.com$/i.test(url.hostname) && /\/(?:login|signin|sign-on|auth)(?:\/|$)/i.test(url.pathname))) throw new Error("GuardrailViolation: authentication input is human-only; use Take Control");
+    if (runtime.ownership === "AGENT" && eventIdentity(target.url) === runtime.expectedEvtstub) {
+      const observed = await this.client.request("Runtime.evaluate", { expression: `(${readSaveSignals.toString()})().pending`, returnByValue: true }, envelope.sessionId);
+      if (observed.exceptionDetails || typeof observed.result?.value !== "boolean") throw new Error("Cannot establish pending-save state; mutation not dispatched");
+      if (observed.result.value) throw new Error("SavePendingError: Saving is visible; use observeSave, inspect validation, and do not close/navigate/repeat Save");
+      const latest = await this.runtime();
+      if (latest.ownership !== "AGENT" || latest.runtimeId !== runtime.runtimeId || latest.activeTargetId !== runtime.activeTargetId || latest.steelSessionId !== runtime.steelSessionId) throw new Error("Control changed during pending-save check; mutation not dispatched");
+    }
     if (envelope.method === "Page.navigate") {
       if (isApprovedEventNavigation(runtime, target.url, envelope.params?.url)) return;
       // Preserve ordinary navigation within the selected event, but never allow
@@ -197,13 +206,33 @@ export class SteelEgoHost {
     const target = await this.activeTarget();
     const { sessionId } = await this.client.request("Target.attachToTarget", { targetId: target.targetId, flatten: true });
     await this.client.request("Accessibility.enable", {}, sessionId);
-    const result = await this.client.request("Accessibility.getFullAXTree", {}, sessionId);
+    let result = await this.client.request("Accessibility.getFullAXTree", {}, sessionId);
     const stableLocators = new Map();
     const bounds = new Map();
     const scope = options.scope || "full_page";
     if (!["full_page", "only_within_viewport", "subtree"].includes(scope)) throw new Error("Unsupported snapshot scope");
+    let frameId;
+    if (scope === "subtree") {
+      const root = (result.nodes || []).find(node => node.backendDOMNodeId === options.root);
+      if (!root) throw new Error("Snapshot subtree unavailable in the top document; take a fresh top-document snapshot");
+      if (/^iframe(?:presentational)?$/i.test(root.role?.value || "")) {
+        const { node } = await this.client.request("DOM.describeNode", { backendNodeId: options.root, depth: 1 }, sessionId);
+        const { frameTree } = await this.client.request("Page.getFrameTree", {}, sessionId);
+        const containsFrame = tree => (tree?.childFrames || []).some(child => child.frame?.id === node?.frameId || containsFrame(child));
+        if (!node?.frameId || !node.contentDocument?.backendNodeId || !containsFrame(frameTree)) {
+          throw new Error("Iframe snapshot unavailable: only an attached same-renderer frame in the assigned page is supported; no other target will be attached");
+        }
+        frameId = node.frameId;
+        result = await this.client.request("Accessibility.getFullAXTree", { frameId }, sessionId);
+        if (!(result.nodes || []).some(item => item.frameId === frameId && item.backendDOMNodeId === node.contentDocument.backendNodeId)) {
+          throw new Error("Iframe snapshot unavailable: frame document identity could not be verified");
+        }
+      }
+    }
     let viewport;
-    try {
+    // Frame refs carry provenance; never suggest an unscoped CSS locator that
+    // could select a same-named control in the top document instead.
+    if (!frameId) try {
       const dom = await this.client.request("DOMSnapshot.captureSnapshot", { computedStyles: [] }, sessionId);
       const strings = dom.strings || [];
       const document = dom.documents?.[0];
@@ -232,15 +261,16 @@ export class SteelEgoHost {
 
     const nodesById = new Map((result.nodes || []).map(node => [node.nodeId, node]));
     let subtree;
-    if (scope === "subtree") {
+    if (scope === "subtree" && !frameId) {
       const root = (result.nodes || []).find(node => node.backendDOMNodeId === options.root);
-      if (!root || root.role?.value === "Iframe") throw new Error("Snapshot subtree unavailable in the top document; iframe snapshots are unsupported by this bridge");
       subtree = new Set();
       const visit = node => { if (!node || subtree.has(node.nodeId)) return; subtree.add(node.nodeId); for (const id of node.childIds || []) visit(nodesById.get(id)); };
       visit(root);
     }
     const refs = [];
-    const lines = [`page ${JSON.stringify(target.title || "")} url=${target.url}`, "[Steel snapshot: top document only; iframe contents not included]"];
+    const lines = [`page ${JSON.stringify(target.title || "")} url=${target.url}`, frameId
+      ? "[Steel snapshot: selected iframe document only; nested iframe contents not included]"
+      : "[Steel snapshot: top document only; iframe contents not included; request an iframe ref subtree to inspect a supported frame]"];
     for (const node of result.nodes || []) {
       if (subtree && !subtree.has(node.nodeId)) continue;
       if (viewport) {
@@ -252,9 +282,9 @@ export class SteelEgoHost {
       const role = String(node.role?.value || "generic");
       const name = String(node.name?.value || "").trim().replace(/\s+/g, " ").slice(0, 300);
       const value = node.value?.value == null ? "" : String(node.value.value).slice(0, 300);
-      if (!name && !value && !INTERACTIVE_ROLE.test(role)) continue;
+      if (!name && !value && !INTERACTIVE_ROLE.test(role) && !/^iframe(?:presentational)?$/i.test(role)) continue;
       const backendNodeId = Number(node.backendDOMNodeId);
-      refs.push({ backendNodeId, role, name });
+      refs.push({ backendNodeId, role, name, ...(frameId ? { frameId } : {}) });
       const stable = stableLocators.get(backendNodeId);
       lines.push(`${role}${name ? ` ${JSON.stringify(name)}` : ""}${value ? ` value=${JSON.stringify(value)}` : ""} [ref=${backendNodeId}${stable ? `, loc=${stable}` : ""}]`);
       if (lines.length >= 800) { lines.push("[Snapshot truncated at 800 lines; inspect a subtree or use bounded page.evaluate]"); break; }

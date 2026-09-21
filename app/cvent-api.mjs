@@ -6,21 +6,30 @@ import { pathToFileURL } from "node:url";
 
 export const CAPABILITIES = Object.freeze({
   getEvent: "api-read", listAdmissionItems: "api-read", listRegistrationPaths: "api-read",
-  listRegistrationTypes: "api-read", listQuestions: "api-read", listSessions: "api-read",
+  listRegistrationTypes: "api-read", listQuestions: "api-read",
   listFees: "api-read", listVouchers: "api-read", listDiscounts: "api-read", listDiscountedAgendaItems: "api-read",
   listQuantityItems: "api-read", listDonationItems: "api-read",
   listQuestionChoices: "api-read", listEventFeatures: "api-read",
+  listContactTypes: "api-read", listEventCustomFieldDefinitions: "api-read",
+  enableEventFeature: "api-write",
   configureDiscount: "api-write", configureVolumeDiscount: "api-write",
-  updateEvent: "api-write", updateEventBasics: "api-write", updateRegistrationType: "api-write", updateEventCustomFieldAnswers: "api-write",
+  updateEvent: "api-write", updateEventBasics: "api-write", updateRegistrationType: "api-write",
 });
 // Official Cvent OpenAPI routes. Keep collection reads here rather than using
 // the installed client's stale routes or unbounded, permissive paginator.
+export const BLOCKED_OPERATIONS = Object.freeze({
+  listSessions: "Sessions/speakers work is outside this build SOW",
+  updateEventCustomFieldAnswers: "Integration identifiers cannot be distinguished safely from build answers; no definition/answer edits exposed",
+  createContactType: "Reviewed public contact-types route is GET only",
+  createCustomField: "Account-wide visibility/default effects cannot be proven isolated from other events",
+});
 const COLLECTIONS = Object.freeze({
+  listContactTypes: { path: "/contact-types" },
+  listEventCustomFieldDefinitions: { path: "/custom-fields", filter: "category eq 'Event'" },
   listAdmissionItems: { path: "/admission-items", filtered: true },
   listRegistrationPaths: { path: "/events/{id}/registration-paths" },
   listRegistrationTypes: { path: "/events/{id}/registration-types" },
   listQuestions: { path: "/event-questions", filtered: true },
-  listSessions: { path: "/sessions", filtered: true },
   listFees: { path: "/events/{id}/fee-items" },
   listVouchers: { path: "/events/{id}/vouchers" },
   listDiscounts: { path: "/events/{id}/discounts" },
@@ -33,14 +42,15 @@ const COLLECTIONS = Object.freeze({
 function collectionScope(url, path, eventId, discountId = null, questionId = null) {
   const route = Object.values(COLLECTIONS).find(route => route.path.replace("{id}", eventId).replace("{questionId}", questionId || "{questionId}") === path);
   if (!route) return false;
-  const allowed = route.filtered || discountId ? ["limit", "token", "filter"] : ["limit", "token"];
+  const allowed = route.filtered || route.filter || discountId ? ["limit", "token", "filter"] : ["limit", "token"];
   if ([...url.searchParams.keys()].some(key => !allowed.includes(key) || url.searchParams.getAll(key).length !== 1)) return false;
   if (discountId) return route === COLLECTIONS.listDiscounts && UUID.test(discountId) && url.searchParams.get("filter") === `id in ('${discountId}')`;
+  if (route.filter) return url.searchParams.get("filter") === route.filter;
   return !route.filtered || url.searchParams.get("filter") === `event.id eq '${eventId}'`;
 }
-const EVENT_FIELDS = new Set(["title", "description", "start", "end", "timezone", "venues", "format", "type", "planners", "note", "languages", "capacity", "showVenueLocation", "showPointOfContact"]);
+const EVENT_FIELDS = new Set(["title", "description", "start", "end", "closeAfter", "timezone", "venues", "format", "type", "planners", "note", "languages", "capacity", "showVenueLocation", "showPointOfContact"]);
 // These fields may be carried forward from GET, never supplied as changes.
-const PRESERVE_ONLY_FIELDS = ["closeAfter", "archiveAfter"];
+const PRESERVE_ONLY_FIELDS = ["archiveAfter"];
 const AUDIT_FIELDS = new Set(["lastModified", "lastModifiedBy"]);
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const normalizeName = value => String(value || "").trim().replace(/\s+/g, " ");
@@ -80,13 +90,48 @@ export function includesRequested(actual, expected) {
 }
 export function buildEventUpdate(event, changes) {
   if (!changes || typeof changes !== "object" || Array.isArray(changes) || !Object.keys(changes).length || Object.keys(changes).some(key => !EVENT_FIELDS.has(key))) throw new ApiFailure("Event changes contain unsupported or prohibited fields");
+  const readOnly = ["id", "code", "virtual", "launchAfter", "phone", "defaultLocale", "currency", "registrationSecurityLevel", "status", "eventStatus", "planningStatus", "testMode", "stakeholders", "customFields", "category", "_links", "created", "createdBy", "meetingRequestId", ...AUDIT_FIELDS];
+  if (Object.keys(event).some(key => ![...EVENT_FIELDS, ...PRESERVE_ONLY_FIELDS, ...readOnly].includes(key))) throw new ApiFailure("Unreviewed event baseline field; refusing potentially lossy PUT");
   // Retain the installed configuration client's explicit safety restrictions.
   if (typeof event.title !== "string" || !event.title.startsWith("(C+D)")) throw new ApiFailure("Installed event PUT client permits only (C+D) events; no browser bypass");
   if (Object.hasOwn(changes, "title") && changes.title !== event.title) throw new ApiFailure("Installed event PUT client requires the existing event title");
+  for (const key of ["planners", "languages", "type"]) if (Object.hasOwn(changes, key) && !isDeepStrictEqual(changes[key], event[key])) throw new ApiFailure(`Changing ${key} may replace definitions/collections; not supported`);
+  for (const key of ["description", "note"]) if (Object.hasOwn(changes, key)) text(changes[key], key === "note" ? 300 : 20000);
+  for (const key of ["start", "end", "closeAfter"]) if (Object.hasOwn(changes, key)) timestamp(changes[key]);
+  if (Object.hasOwn(changes, "capacity") && (!Number.isSafeInteger(changes.capacity) || changes.capacity < -1)) throw new ApiFailure("Invalid event capacity");
+  if (Object.hasOwn(changes, "format") && !["In-person", "Virtual", "Hybrid"].includes(changes.format)) throw new ApiFailure("Invalid event format");
+  if (Object.hasOwn(changes, "timezone")) { text(changes.timezone, 29); try { new Intl.DateTimeFormat("en", { timeZone: changes.timezone }); } catch { throw new ApiFailure("Invalid timezone"); } }
+  for (const key of ["showVenueLocation", "showPointOfContact"]) if (Object.hasOwn(changes, key) && typeof changes[key] !== "boolean") throw new ApiFailure("Visibility must be boolean");
   const body = { ...Object.fromEntries([...EVENT_FIELDS, ...PRESERVE_ONLY_FIELDS].filter(key => Object.hasOwn(event, key)).map(key => [key, structuredClone(event[key])])), ...structuredClone(changes) };
+  if (Object.hasOwn(changes, "venues")) {
+    if (!Array.isArray(changes.venues) || changes.venues.length !== 1 || (event.venues?.length ?? 0) > 1) throw new ApiFailure("Venue removal/collection replacement is prohibited; supply one venue patch");
+    const venue = changes.venues[0]; keys(venue, ["name", "address"]);
+    if (Object.hasOwn(venue, "name")) text(venue.name, 300);
+    if (Object.hasOwn(venue, "address")) { keys(venue.address, ["address1", "address2", "address3", "city", "regionCode", "postalCode", "countryCode"]); for (const [key, value] of Object.entries(venue.address)) { text(value, key === 'postalCode' ? 25 : key === 'regionCode' ? 10 : key === 'countryCode' ? 3 : 40); if (['regionCode', 'countryCode'].includes(key) && value.length < 2) throw new ApiFailure('Invalid venue address code'); } }
+    body.venues = [{ ...event.venues?.[0], ...venue, ...(venue.address ? { address: { ...event.venues?.[0]?.address, ...venue.address } } : {}) }];
+  }
+  if (body.start && body.end && Date.parse(body.start) > Date.parse(body.end)) throw new ApiFailure("Event start is after end");
   if (["title", "format", "timezone", "type"].some(key => typeof body[key] !== "string" || !body[key]) || !Array.isArray(body.planners) || !Array.isArray(body.languages)) throw new ApiFailure("Fresh event baseline lacks the required PUT fields; refusing an incomplete update");
   if (body.closeAfter && body.end && Date.parse(body.closeAfter) > Date.parse(body.end)) throw new ApiFailure("Event registration deadline is after its end date; Cvent rejects this preserved schedule. Explicit approval to correct the dates is required before event PUT; no write attempted");
   return body;
+}
+function eventWireBody(body) {
+  // Same nested writable projections as the installed configuration client and
+  // reviewed Event/Venue/Planner schemas. Read-only contact data is never sent.
+  const project = (value, writable, readOnly = []) => {
+    if (!object(value) || Object.keys(value).some(key => ![...writable, ...readOnly].includes(key))) throw new ApiFailure("Unreviewed nested event field; refusing lossy replacement");
+    return Object.fromEntries(writable.filter(key => Object.hasOwn(value, key)).map(key => [key, structuredClone(value[key])]));
+  };
+  const address = value => project(value, ["address1", "address2", "address3", "city", "countryCode", "postalCode", "regionCode"], ["region", "country", "latitude", "longitude"]);
+  const wire = structuredClone(body);
+  wire.planners = body.planners.map(planner => {
+    const row = project(planner, ["prefix", "firstName", "lastName", "company", "title", "email", "type", "homeAddress", "workAddress"], ["nickname", "optOut", "pager", "_links", "deleted", "middleName", "ccEmail", "gender", "designation", "membership", "primaryAddressType", "homePhone", "homeFax", "workPhone", "workFax", "customFields", "sourceId", "mobilePhone", "created", "createdBy", ...AUDIT_FIELDS]);
+    if (row.type) row.type = project(row.type, ["id"], ["name"]);
+    for (const key of ["homeAddress", "workAddress"]) if (row[key]) row[key] = address(row[key]);
+    return row;
+  });
+  if (body.venues) wire.venues = body.venues.map(venue => { const row = project(venue, ["name", "address"]); if (row.address) row.address = address(row.address); return row; });
+  return wire;
 }
 export function verifyEventUpdate(before, after, changes) {
   if (before.id !== after.id || !includesRequested(after, changes)) throw new ApiFailure("Event PUT saved values did not verify; reconciliation required");
@@ -101,6 +146,31 @@ const DISCOUNT_FIELDS = ["name", "active", "stackable", "method", "effectiveFrom
 const DISCOUNT_PATCH_FIELDS = DISCOUNT_FIELDS.filter(key => !["type", "code", "applyToAllAgendaItems"].includes(key));
 const discountKey = code => code.trim().toUpperCase();
 const object = value => !!value && typeof value === "object" && !Array.isArray(value);
+function keys(value, allowed) { if (!object(value) || !Object.keys(value).length || Object.keys(value).some(key => !allowed.includes(key))) throw new ApiFailure("Unsupported/prohibited fields or empty patch"); }
+function text(value, max) { if (typeof value !== "string" || !value.trim() || value.length > max) throw new ApiFailure("Explicit nonempty text required; clearing is prohibited"); }
+function timestamp(value) { if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().replace('.000Z', 'Z') !== value.replace('.000Z', 'Z')) throw new ApiFailure("Valid explicit UTC date-time required; clearing is prohibited"); }
+const business = row => Object.fromEntries(Object.entries(row).filter(([key]) => !AUDIT_FIELDS.has(key)));
+function uniqueRows(rows) { if (rows.some(row => !UUID.test(row.id)) || new Set(rows.map(row => row.id)).size !== rows.length) throw new ApiFailure("Catalog identities are missing or ambiguous"); }
+function sameCatalog(actual, expected) {
+  uniqueRows(actual); uniqueRows(expected);
+  const sort = rows => rows.map(business).sort((a, b) => a.id.localeCompare(b.id));
+  return isDeepStrictEqual(sort(actual), sort(expected));
+}
+function registrationBody(before, patch) {
+  const fields = ["openForRegistration", "automaticOpenDate", "automaticEndDate", "capacity"];
+  keys(patch, fields);
+  if (Object.keys(before).some(key => ![...fields, "id", "event", "name", "code", "description", "virtual", ...AUDIT_FIELDS].includes(key))) throw new ApiFailure("Unreviewed registration baseline field; no lossy PUT");
+  const body = { id: before.id, ...Object.fromEntries(fields.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])), ...structuredClone(patch) };
+  if (typeof body.openForRegistration !== "boolean") throw new ApiFailure("Explicit registration availability required");
+  for (const key of ["automaticOpenDate", "automaticEndDate"]) if (Object.hasOwn(patch, key)) timestamp(patch[key]);
+  if (body.automaticOpenDate && body.automaticEndDate && Date.parse(body.automaticOpenDate) > Date.parse(body.automaticEndDate)) throw new ApiFailure("Registration dates reversed");
+  if (Object.hasOwn(patch, "capacity")) keys(patch.capacity, ["total"]);
+  if (body.capacity) {
+    if (!Number.isSafeInteger(body.capacity.total) || body.capacity.total < -1 || !Number.isSafeInteger(before.capacity?.consumed) || before.capacity.consumed < 0 || (body.capacity.total !== -1 && body.capacity.total < before.capacity.consumed) || Object.keys(before.capacity).some(key => !["total", "consumed", "remaining"].includes(key))) throw new ApiFailure("Registration capacity cannot be safely preserved");
+    body.capacity = { total: body.capacity.total };
+  }
+  return body;
+}
 function discountMatch(rows, code, kind = "DISCOUNT_CODE") {
   const ids = new Set();
   for (const row of rows) {
@@ -153,8 +223,8 @@ function prepareVolumeDiscount(input, before) {
   return { body };
 }
 export class CventConnection {
-  constructor({ credentials = () => loadCredentials(), fetcher = fetch, clientFactory = existingClient, intervalMs = 520, discountPollDelaysMs = [1000, 2000, 5000, 10000, 20000, 30000, 60000], sleeper = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
-    this.credentials = credentials; this.fetcher = fetcher; this.clientFactory = clientFactory;
+  constructor({ credentials = () => loadCredentials(), fetcher = fetch, clientFactory = existingClient, mutationGuard = async () => {}, intervalMs = 520, discountPollDelaysMs = [1000, 2000, 5000, 10000, 20000, 30000, 60000], sleeper = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+    this.credentials = credentials; this.fetcher = fetcher; this.clientFactory = clientFactory; this.mutationGuard = mutationGuard;
     this.intervalMs = intervalMs; this.tail = Promise.resolve(); this.lastRequest = 0;
     if (!Array.isArray(discountPollDelaysMs) || !discountPollDelaysMs.length || discountPollDelaysMs.length > 10 || discountPollDelaysMs.some((ms, i) => !Number.isFinite(ms) || ms < 0 || ms > 60000 || (i > 0 && ms <= discountPollDelaysMs[i - 1]))) throw new ApiFailure("Invalid bounded discount polling schedule");
     this.discountPollDelaysMs = [...discountPollDelaysMs]; this.sleeper = sleeper;
@@ -168,6 +238,7 @@ export class CventConnection {
       const wait = this.intervalMs - (Date.now() - this.lastRequest);
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       this.lastRequest = Date.now();
+      if (!["GET", "HEAD"].includes((init.method || "GET").toUpperCase()) && !new URL(url).pathname.endsWith("/oauth2/token")) await this.mutationGuard();
       const response = await this.fetcher(url, { ...init, redirect: "error", signal: AbortSignal.timeout(15000) });
       // Keep the public error generic and never retry writes. Preserve redacted
       // API validation diagnostics for durable receipts, not OAuth response bodies.
@@ -248,6 +319,7 @@ export class CventConnection {
     const first = new URL(`${credentials.baseUrl}${route.path.replace("{id}", eventId).replace("{questionId}", questionId)}`);
     first.searchParams.set("limit", "100");
     if (route.filtered) first.searchParams.set("filter", `event.id eq '${eventId}'`);
+    if (route.filter) first.searchParams.set("filter", route.filter);
     if (discountId) first.searchParams.set("filter", `id in ('${discountId}')`);
     const path = first.pathname.slice(new URL(credentials.baseUrl).pathname.length);
     let url = first;
@@ -261,6 +333,7 @@ export class CventConnection {
       try { page = await response.json(); } catch { throw new ApiFailure("Cvent collection returned invalid JSON; no partial result returned"); }
       if (!Array.isArray(page?.data) || page.data.some(item => !item || typeof item !== "object" || Array.isArray(item))) throw new ApiFailure("Cvent collection response has invalid data; no partial result returned");
       if (page.data.some(item => item.event?.id != null && item.event.id !== eventId)) throw new ApiFailure("Cvent collection returned a different event identity; no partial result returned");
+      if (operation === "listEventCustomFieldDefinitions" && page.data.some(item => item.category !== "Event")) throw new ApiFailure("Custom-field catalog escaped the Event category");
       if (questionId && page.data.some(item => item.question?.id != null && item.question.id !== questionId)) throw new ApiFailure("Choice read returned a different question identity");
       if (discountId && page.data.some(item => item.id !== discountId)) throw new ApiFailure("Discount readback returned a different identity");
       items.push(...page.data);
@@ -283,11 +356,10 @@ export class CventConnection {
     }
     throw new ApiFailure("Cvent collection exceeded its bounded page limit; no partial result returned");
   }
-  async client(eventId, family = "default", expectedEvent = null) {
+  async client(eventId, family = "default") {
     if (!UUID.test(eventId)) throw new ApiFailure("Approved Cvent API event UUID required");
     const credentials = await this.credentials();
     const base = new URL(credentials.baseUrl);
-    let checkedBeforePut = false, putStarted = false;
     const scopedFetch = async (input, init = {}) => {
       const url = new URL(input), method = (init.method || "GET").toUpperCase();
       if (url.origin !== base.origin || !url.pathname.startsWith(`${base.pathname}/`) || url.username || url.password || url.hash) throw new ApiFailure("Cvent request escaped the configured API endpoint");
@@ -296,24 +368,15 @@ export class CventConnection {
       const root = `/events/${eventId}`;
       const eventRead = method === "GET" && path === root && !url.search;
       const collectionRead = method === "GET" && collectionScope(url, path, eventId);
-      const eventWrite = path === root && method === "PUT";
-      const registrationWrite = method === "PUT" && new RegExp(`^/events/${eventId}/registration-types/[a-zA-Z0-9_-]+$`).test(path);
-      const fieldWrite = method === "PUT" && new RegExp(`^/events/${eventId}/custom-fields/[a-zA-Z0-9_-]+/answers$`).test(path);
-      if (!oauth && !eventRead && !collectionRead && !eventWrite && !registrationWrite && !fieldWrite) throw new ApiFailure("Cvent API operation is outside the approved event/capability scope");
+      // Installed clients are read transports only. All writes go through the
+      // adapter's prepared, validated, receipt-bound dispatch below.
+      if (!oauth && !eventRead && !collectionRead) throw new ApiFailure("Cvent API operation is outside the approved event/capability scope");
       if (oauth) {
         const body = new URLSearchParams(init.body);
         body.set("client_id", credentials.clientId);
         return this.transport(url, { ...init, body });
       }
-      if (expectedEvent && eventWrite && !checkedBeforePut) throw new ApiFailure("Event PUT requires a fresh unchanged baseline check");
-      if (eventWrite) putStarted = true;
-      const response = await this.transport(url, init);
-      if (expectedEvent && !putStarted && method === "GET" && path === root) {
-        const payload = await response.clone().json();
-        if (!isDeepStrictEqual(payload.data ?? payload, expectedEvent)) throw new ApiFailure("Event changed immediately before PUT; reconcile before retry");
-        checkedBeforePut = true;
-      }
-      return response;
+      return this.transport(url, init);
     };
     return this.clientFactory(credentials, scopedFetch, family);
   }
@@ -330,26 +393,17 @@ export class CventConnection {
     const identity = input?.[identityKey], fields = volume ? VOLUME_PATCH_FIELDS : DISCOUNT_PATCH_FIELDS;
     const match = rows => discountMatch(rows, identity, kind);
     const prepare = volume ? prepareVolumeDiscount : prepareDiscount;
-    if (!object(input) || Object.keys(input).some(key => ![identityKey, "discountId", "patch", "createIfMissing", "agendaItems"].includes(key)) || typeof identity !== "string" || !identity.trim() || identity !== identity.trim() || identity.length > (volume ? 50 : 30) || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !fields.includes(key))) throw new ApiFailure("Discount input requires an exact identity and supported patch; existing-item changes are prohibited");
+    if (!object(input) || Object.keys(input).some(key => ![identityKey, "discountId", "patch", "createIfMissing", "agendaItems"].includes(key)) || typeof identity !== "string" || !identity.trim() || identity !== identity.trim() || identity.length > (volume ? 50 : 30) || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !fields.includes(key))) throw new ApiFailure("Discount input requires an exact identity and supported patch");
+    if (Object.hasOwn(input.patch, "note")) text(input.patch.note, 300);
     if (input.agendaItems !== undefined && (!Array.isArray(input.agendaItems) || !input.agendaItems.length || input.agendaItems.length > 100 || input.agendaItems.some(item => !object(item) || Object.keys(item).some(key => !["id", "type"].includes(key)) || !UUID.test(item.id) || !["AdmissionItem", "QuantityItem"].includes(item.type)) || new Set(input.agendaItems.map(item => item.id)).size !== input.agendaItems.length)) throw new ApiFailure("agendaItems requires 1–100 unique, explicit AdmissionItem/QuantityItem UUIDs; sessions and other item types are outside scope");
     const rows = await this.readCollection(target.apiEventId, "listDiscounts");
     const before = match(rows);
     if (input.discountId && before?.id !== input.discountId) throw new ApiFailure("Discount ID/code does not match this event's catalog");
     if (!before && input.createIfMissing !== true) throw new ApiFailure("Discount code not found; creation requires explicit createIfMissing and complete configuration");
     const { body } = prepare(input, before);
-    // Existing codes are immutable under the RR preservation policy. A verified
-    // existing identity is not necessarily a match for this workbook's values.
     if (before) {
-      const differences = Object.keys(input.patch).filter(key => !includesRequested(before[key], input.patch[key]));
-      if (before[identityKey] !== identity) differences.push(identityKey);
-      if (input.agendaItems) {
-        if (!volume && before.applyToAllAgendaItems !== true) differences.push("applyToAllAgendaItems");
-        const links = await this.discountLinks(target.apiEventId, before.id);
-        if (!isDeepStrictEqual(links, this.itemKeys(input.agendaItems))) differences.push("agendaItems");
-      } else if (volume && (await this.discountLinks(target.apiEventId, before.id)).length) differences.push("agendaItems");
-      return { route: "api", action: differences.length ? "creation-required" : "unchanged", verified: true, requirementsSatisfied: differences.length === 0, differences,
-        ...(differences.length ? { limitation: "This adapter cannot create a second object with this identity. The original is untouched. Same-identity variant creation is an unsupported authoring capability; use documented Ego creation only if Cvent supports it without altering RR values or existing objects." } : {}),
-        eventId: target.apiEventId, discountId: before.id, saved: before };
+      if (before[identityKey] !== identity) throw new ApiFailure("Exact RR identity differs from the existing code; renaming/suffix substitution is not supported");
+      return this.updateDiscount(target, event, input, before, body, beforeWrite, recordEvidence, kind);
     }
     if (volume) {
       // Exact RR names matter. An equivalent rule under a different name is
@@ -401,6 +455,75 @@ export class CventConnection {
     }
     throw new ApiFailure("Discount saved state did not verify within bounded polling; keep uncertainty, do not replay or use browser fallback");
   }
+  async dispatch(prepared, beforeWrite, recordEvidence, recheck = async () => {}) {
+    const { credentials, token } = await this.authenticate();
+    await beforeWrite(prepared);
+    await recheck();
+    const response = await this.transport(credentials.baseUrl + prepared.path, { method: prepared.method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(prepared.body ? { body: JSON.stringify(prepared.body) } : {}) });
+    await recordEvidence({ phase: "ACKNOWLEDGED_NOT_VERIFIED", status: response.status, path: prepared.path, requestId: response.headers.get("x-request-id") || response.headers.get("x-cvent-request-id") });
+    if (response.status === 204) return null;
+    let payload;
+    try { payload = await response.json(); } catch {
+      await recordEvidence({ phase: "ACKNOWLEDGMENT_BODY", format: "INVALID_JSON", path: prepared.path });
+      throw new ApiFailure("Write acknowledgment invalid; keep uncertainty");
+    }
+    const secrets = [credentials.clientId, credentials.clientSecret, token].filter(Boolean).sort((a, b) => b.length - a.length);
+    const sanitize = (value, depth = 0) => {
+      if (depth > 6) return "[depth limited]";
+      if (typeof value === "string") return secrets.reduce((text, secret) => text.replaceAll(secret, "[redacted]"), value).slice(0, 1000);
+      if (Array.isArray(value)) return value.slice(0, 20).map(item => sanitize(item, depth + 1));
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 40).map(([key, item]) => [/authorization|cookie|token|secret|password|client.?id|api.?key/i.test(key) ? "[sensitive field]" : secrets.reduce((text, secret) => text.replaceAll(secret, "[redacted]"), key), /authorization|cookie|token|secret|password|client.?id|api.?key/i.test(key) ? "[redacted]" : sanitize(item, depth + 1)]));
+      return value;
+    };
+    const sanitized = JSON.stringify(sanitize(payload));
+    await recordEvidence({ phase: "ACKNOWLEDGMENT_BODY", path: prepared.path, format: Array.isArray(payload) ? "ARRAY" : payload === null ? "NULL" : typeof payload, ...(sanitized.length <= 16384 ? { body: JSON.parse(sanitized) } : { truncated: true, preview: sanitized.slice(0, 16384) }) });
+    // A documented resource object takes precedence over incidental data fields.
+    return object(payload) && (Object.hasOwn(payload, "id") || Object.hasOwn(payload, "type")) ? payload : payload?.data ?? payload;
+  }
+  async pollSaved(read, matches, recordEvidence) {
+    const started = Date.now();
+    for (const delay of this.discountPollDelaysMs) {
+      const remaining = delay - (Date.now() - started); if (remaining > 0) await this.sleeper(remaining);
+      const saved = await read(), matched = matches(saved);
+      await recordEvidence({ phase: "READBACK", matched, saved });
+      if (matched) return saved;
+    }
+    throw new ApiFailure("Saved state did not verify within bounded polling; retain uncertainty, never replay");
+  }
+  async updateDiscount(target, event, input, before, body, beforeWrite, recordEvidence, kind) {
+    const id = target.apiEventId, volume = kind === "VOLUME_DISCOUNT";
+    const match = rows => discountMatch(rows, volume ? input.name : input.code, kind);
+    let links = await this.discountLinks(id, before.id);
+    const desiredLinks = input.agendaItems ? this.itemKeys(input.agendaItems) : links;
+    if (links.some(key => !desiredLinks.includes(key))) throw new ApiFailure("Removing/replacing existing discount links is prohibited");
+    const catalog = input.agendaItems ? await this.discountItemsSnapshot(id, input.agendaItems) : null;
+    if (input.agendaItems && !volume) body = { ...body, applyToAllAgendaItems: true };
+    const expected = { ...before, ...body, ...(!volume ? { capacity: { ...before.capacity, ...body.capacity } } : {}) };
+    if (isDeepStrictEqual(business(before), business(expected)) && isDeepStrictEqual(links, desiredLinks)) return { route: "api", action: "unchanged", verified: true, requirementsSatisfied: true, differences: [], eventId: id, discountId: before.id, saved: before };
+    const assertBaseline = async () => {
+      if (!isDeepStrictEqual(event, (await this.assertTarget(target)).event) || !isDeepStrictEqual(business(before), business(match(await this.readCollection(id, "listDiscounts")) ?? {}))) throw new ApiFailure("Discount/event changed during preparation; do not write or replay");
+      if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, input.agendaItems)))) throw new ApiFailure("Discount links/items changed during preparation");
+    };
+    const root = `/events/${id}/discounts/${before.id}`;
+    for (const item of input.agendaItems ?? []) {
+      const key = this.itemKeys([item])[0]; if (links.includes(key)) continue;
+      await assertBaseline();
+      const ack = await this.dispatch({ phase: "ADD_DISCOUNT_ITEM", method: "PUT", path: `${root}/agenda-items/${item.id}`, baseline: before, discountId: before.id, agendaItem: item, existingLinks: links }, beforeWrite, recordEvidence);
+      if (ack !== null) throw new ApiFailure("Unexpected link acknowledgment; keep uncertainty");
+      links = [...links, key].sort();
+      await this.pollSaved(() => this.discountLinks(id, before.id), saved => isDeepStrictEqual(saved, links), recordEvidence);
+    }
+    await assertBaseline();
+    let saved = before;
+    if (!isDeepStrictEqual(business(before), business(expected))) {
+      const ack = await this.dispatch({ phase: "UPDATE_DISCOUNT", method: "PUT", path: root, baseline: before, body, discountId: before.id }, beforeWrite, recordEvidence);
+      if (ack?.id !== before.id) throw new ApiFailure("Discount acknowledgment has wrong identity; keep uncertainty");
+      saved = await this.pollSaved(async () => match(await this.readCollection(id, "listDiscounts")), row => !!row && isDeepStrictEqual(business(row), business(expected)), recordEvidence);
+    }
+    if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, input.agendaItems)))) throw new ApiFailure("Discount relationships/items did not preserve saved state");
+    await this.assertTarget(target);
+    return { route: "api", action: "updated", verified: true, requirementsSatisfied: true, differences: [], eventId: id, discountId: before.id, saved, links };
+  }
   itemKeys(items) { return items.map(item => `${item.type}:${item.id}`).sort(); }
   async discountItemsSnapshot(eventId, items) {
     const selected = [];
@@ -439,7 +562,6 @@ export class CventConnection {
     // Refuse a newly returned, unreviewed field before any link/finalizing PUT.
     // This is initial configuration, not permission for a lossy overwrite.
     (volume ? prepareVolumeDiscount : prepareDiscount)(input, baseline);
-    const business = row => Object.fromEntries(Object.entries(row).filter(([key]) => !AUDIT_FIELDS.has(key)));
     const assertNewUnchanged = async () => {
       await this.assertTarget(target);
       const current = match(await this.readCollection(target.apiEventId, "listDiscounts"));
@@ -497,6 +619,7 @@ export class CventConnection {
     throw new ApiFailure("New item discount finalization did not verify within bounded polling; keep uncertainty, never replay");
   }
   async execute(target, operation, input = {}, beforeWrite = async () => {}, recordEvidence = async () => {}) {
+    if (Object.hasOwn(BLOCKED_OPERATIONS, operation)) throw new ApiFailure(BLOCKED_OPERATIONS[operation]);
     if (!Object.hasOwn(CAPABILITIES, operation)) throw new ApiFailure("Operation is not exposed by the installed API adapter. Check API coverage documentation before authorizing browser fallback");
     if (CAPABILITIES[operation] === "api-read") {
       // Reads remain available to reconcile an uncertain rename or status change.
@@ -507,27 +630,74 @@ export class CventConnection {
       return operation === "getEvent" ? event : this.readCollection(target.apiEventId, operation, null, operation === "listQuestionChoices" ? input.questionId : null);
     }
     const { event, client } = await this.assertTarget(target);
+    if (!event.title?.startsWith("(C+D)")) throw new ApiFailure("Writes require the retained (C+D) event guard; no bypass");
     if (operation === "configureDiscount" || operation === "configureVolumeDiscount") return this.configureDiscount(target, event, input, beforeWrite, recordEvidence, operation === "configureVolumeDiscount" ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE");
+    const id = target.apiEventId;
     if (operation === "updateEvent" || operation === "updateEventBasics") {
       const body = buildEventUpdate(event, input);
-      const configured = await this.client(target.apiEventId, "configuration", event);
-      // Refuse stale read/merge payloads; the API does not provide an ETag here.
-      const latest = await client.getEvent(target.apiEventId);
-      if (!isDeepStrictEqual(latest, event)) throw new ApiFailure("Event changed during update preparation; reconcile before retry");
-      await beforeWrite();
-      const write = await configured.updateEventBasics(target.apiEventId, body);
-      const saved = await client.getEvent(target.apiEventId);
-      verifyEventUpdate(event, saved, input);
-      return { route: "api", method: "PUT", verified: true, eventId: saved.id, write, saved };
+      if (body.languages.length !== 1 || body.planners.length > 1) throw new ApiFailure("Event PUT cannot preserve unsupported language/planner collections");
+      const wire = eventWireBody(body);
+      const expected = { ...event, ...body };
+      const comparable = row => {
+        const copy = business(structuredClone(row));
+        for (const key of ['start', 'end', 'closeAfter', 'archiveAfter']) if (typeof copy[key] === 'string' && Number.isFinite(Date.parse(copy[key]))) copy[key] = new Date(copy[key]).toISOString();
+        if (input.format) delete copy.virtual; // Deprecated read-only projection of format.
+        if (input.venues?.[0]?.address && copy.venues?.[0]?.address) {
+          for (const key of ['latitude', 'longitude']) delete copy.venues[0].address[key];
+          if (Object.hasOwn(input.venues[0].address, 'countryCode')) delete copy.venues[0].address.country;
+          if (Object.hasOwn(input.venues[0].address, 'regionCode')) delete copy.venues[0].address.region;
+        }
+        return copy;
+      };
+      if (isDeepStrictEqual(expected, event)) return { route: "api", action: "unchanged", verified: true, saved: event };
+      if (!isDeepStrictEqual(event, (await this.assertTarget(target)).event)) throw new ApiFailure("Event changed during update preparation");
+      const ack = await this.dispatch({ phase: "UPDATE_EVENT", method: "PUT", path: `/events/${id}`, baseline: event, body: wire }, beforeWrite, recordEvidence, async () => { if (!isDeepStrictEqual(event, (await this.assertTarget(target)).event)) throw new ApiFailure("Event changed immediately before PUT; no dispatch"); });
+      if (ack?.id !== id) throw new ApiFailure("Event acknowledgment has wrong identity; keep uncertainty");
+      const saved = await this.pollSaved(() => client.getEvent(id), row => isDeepStrictEqual(comparable(row), comparable(expected)), recordEvidence);
+      await this.assertTarget(target);
+      return { route: "api", method: "PUT", action: "updated", verified: true, eventId: id, saved };
     }
     if (operation === "updateRegistrationType") {
-      if (!UUID.test(input.registrationTypeId) || !input.patch || typeof input.patch !== "object" || Object.keys(input.patch).some(key => !["openForRegistration", "automaticOpenDate", "automaticEndDate", "capacity"].includes(key))) throw new ApiFailure("A registration type ID and supported patch are required");
-      const configured = await this.client(target.apiEventId, "configuration");
-      await beforeWrite();
-      return configured.updateRegistrationType(target.apiEventId, input.registrationTypeId, input.patch);
+      keys(input, ["registrationTypeId", "patch"]);
+      if (!UUID.test(input.registrationTypeId)) throw new ApiFailure("Explicit registration type UUID required");
+      const rows = await this.readCollection(id, "listRegistrationTypes"); uniqueRows(rows);
+      const before = rows.find(row => row.id === input.registrationTypeId);
+      if (!before) throw new ApiFailure("Registration type is not in the selected event");
+      const body = registrationBody(before, input.patch);
+      const expected = { ...before, ...body, ...(body.capacity ? { capacity: { ...before.capacity, ...body.capacity, ...(Object.hasOwn(before.capacity, "remaining") ? { remaining: body.capacity.total === -1 ? -1 : body.capacity.total - before.capacity.consumed } : {}) } } : {}) };
+      if (isDeepStrictEqual(before, expected)) return { route: "api", action: "unchanged", verified: true, saved: before };
+      if (!isDeepStrictEqual(rows, await this.readCollection(id, "listRegistrationTypes")) || !isDeepStrictEqual(event, (await this.assertTarget(target)).event)) throw new ApiFailure("Registration/event baseline changed before write");
+      const ack = await this.dispatch({ phase: "UPDATE_REGISTRATION_TYPE", method: "PUT", path: `/events/${id}/registration-types/${before.id}`, baseline: before, body }, beforeWrite, recordEvidence);
+      if (ack?.id !== before.id) throw new ApiFailure("Registration acknowledgment has wrong identity; keep uncertainty");
+      const expectedRows = rows.map(row => row.id === before.id ? expected : row);
+      const savedRows = await this.pollSaved(() => this.readCollection(id, "listRegistrationTypes"), result => sameCatalog(result, expectedRows), recordEvidence);
+      await this.assertTarget(target);
+      return { route: "api", method: "PUT", action: "updated", verified: true, eventId: id, saved: savedRows.find(row => row.id === before.id) };
     }
-    if (!Array.isArray(input.fields) || !input.fields.length || input.fields.some(field => !field || !UUID.test(field.id) || typeof field.name !== "string" || typeof field.type !== "string" || !Array.isArray(field.value) || !field.value.every(value => typeof value === "string"))) throw new ApiFailure("Valid custom-field IDs and string values required");
-    await beforeWrite();
-    return client.updateEventCustomFieldAnswers(target.apiEventId, event.title, input.fields);
+    if (operation === "enableEventFeature") {
+      keys(input, ["type"]);
+      if (!["Website", "Registration"].includes(input.type)) throw new ApiFailure("Only Website/Registration feature enablement is in scope; no disable/launch");
+      const rows = await this.readCollection(id, "listEventFeatures");
+      if (new Set(rows.map(row => row.type)).size !== rows.length) throw new ApiFailure("Ambiguous feature catalog");
+      const before = rows.find(row => row.type === input.type);
+      if (!before || typeof before.enabled !== "boolean" || before.locked !== false || Object.keys(before).some(key => !["type", "enabled", "locked", "lockedReason", "enabledTier", "availableTiers", "config", "weblink"].includes(key))) throw new ApiFailure("Feature scope/configuration is unavailable or locked");
+      if (before.enabled) return { route: "api", action: "unchanged", verified: true, saved: before };
+      if (before.type === "Registration" && (!object(before.config) || Object.keys(before.config).some(key => key !== 'pricing') || !object(before.config.pricing) || typeof before.config.pricing.enabled !== 'boolean' || !['invoicePrefix', 'revenueGoal', 'merchantAccount', 'currency', 'allowedPaymentMethods'].every(key => Object.hasOwn(before.config.pricing, key)))) throw new ApiFailure("Registration feature enablement lacks a complete pricing baseline; cannot preserve payment defaults");
+      const body = { type: before.type, enabled: true, ...Object.fromEntries(["enabledTier", "config"].filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) };
+      if (!isDeepStrictEqual(rows, await this.readCollection(id, "listEventFeatures")) || !isDeepStrictEqual(event, (await this.assertTarget(target)).event)) throw new ApiFailure("Feature/event baseline changed before write");
+      const ack = await this.dispatch({ phase: "ENABLE_EVENT_FEATURE", method: "PUT", path: `/events/${id}/features/${before.type}`, baseline: before, body }, beforeWrite, recordEvidence);
+      const featureFields = ["type", "enabled", "locked", "lockedReason", "enabledTier", "availableTiers", "config", "weblink"];
+      if (ack !== null && (!object(ack) || (Object.hasOwn(ack, "type") && ack.type !== before.type) || Object.keys(ack).some(key => !featureFields.includes(key)))) throw new ApiFailure("Feature acknowledgment has wrong or unsupported identity; retain uncertainty");
+      if (ack?.type === undefined) await recordEvidence({ phase: "ACK_IDENTITY_ABSENT_READBACK_REQUIRED", expectedType: before.type });
+      // Missing identity on a successful acknowledgment is not proof of failure.
+      // Only the full independently read catalog + selected Draft event below can
+      // establish success. Conflicting/foreign identities never reach this path.
+      if (ack && !includesRequested({ ...before, enabled: true }, ack)) throw new ApiFailure("Feature acknowledgment conflicts with requested state; retain uncertainty");
+      const expected = rows.map(row => row.type === before.type ? { ...row, enabled: true } : row);
+      const saved = await this.pollSaved(() => this.readCollection(id, "listEventFeatures"), result => isDeepStrictEqual(result, expected), recordEvidence);
+      await this.assertTarget(target);
+      return { route: "api", action: "updated", verified: true, eventId: id, saved };
+    }
+    throw new ApiFailure("No scoped write implementation");
   }
 }

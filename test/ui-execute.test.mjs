@@ -34,13 +34,63 @@ test('an old startup rejection is displayed as retired, never as a current opera
   assert.match(f.get('cost').textContent, /\$0\.00 this run/);
 });
 
-test('budget reset display distinguishes current allowance from selected historical run cost', async () => {
+test('cost display retains per-run tracking and indicates no spending stop', async () => {
   const record = { id: 'job', status: 'INCOMPLETE', piCostUSD: 10.5, totalEventCostUSD: 49.8 };
-  const f = fixture(path => path === '/api/runtime' ? { ...runtime, budget: { resetId: 'reset', spentUSD: 0, allowanceUSD: 60, externalCostReserveUSD: 10 } } : response(path, record));
+  const f = fixture(path => path === '/api/runtime' ? { ...runtime, budget: { resetId: 'reset', spentUSD: 0, spendingLimitEnabled: false, allowanceUSD: 60, externalCostReserveUSD: 10 } } : response(path, record));
   await turn();
-  assert.match(f.get('cost').textContent, /\$0\.00 used since reset/);
-  assert.match(f.get('cost').textContent, /\$60\.00 per-event allowance/);
-  assert.match(f.get('cost').textContent, /\$10\.50 historical selected run/);
+  assert.match(f.get('cost').textContent, /\$0\.00 tracked since reset/);
+  assert.match(f.get('cost').textContent, /no spending stop/);
+  assert.match(f.get('cost').textContent, /\$10\.50 selected run/);
+});
+
+test('execution clock excludes login/setup and stopped-before-AI time', async () => {
+  for (const state of [{status:'UPLOADED'}, {status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'}, {status:'STOPPED',phase:'SETTLED'}]) {
+    const record = {id:'job',workflow:'login-first',startedAt:'2026-01-01T08:00:00Z',finishedAt:'2026-01-01T10:30:00Z',...state};
+    const f = fixture(path => response(path, record));
+    await turn();
+    assert.equal(f.get('elapsed').textContent, '00:00:00');
+    assert.match(f.get('elapsedLabel').textContent, /starts after verified Return/);
+  }
+});
+
+test('settled execution clock uses existing AI start and finish, not upload/browser start', async () => {
+  const record = {id:'job',workflow:'login-first',status:'INCOMPLETE',startedAt:'2026-01-01T08:00:00Z',aiStartedAt:'2026-01-01T09:00:00Z',finishedAt:'2026-01-01T10:30:00Z'};
+  const f = fixture(path => response(path, record));
+  await turn();
+  assert.equal(f.get('elapsed').textContent, '01:30:00');
+  await vm.runInContext('refresh()', f.context);
+  assert.equal(f.get('elapsed').textContent, '01:30:00', 'settled clock must not keep increasing');
+  assert.match(f.get('elapsedLabel').textContent, /target ~90 min \(not a cutoff\)/);
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="elapsedLabel"/);
+  assert.match(html, /not guarantees or automatic limits/);
+});
+
+test('historical records retain their original duration with an honest setup-inclusive label', async () => {
+  const record = {id:'job',status:'INCOMPLETE',startedAt:'2026-01-01T08:00:00Z',finishedAt:'2026-01-01T10:30:00Z'};
+  const f = fixture(path => response(path, record));
+  await turn();
+  assert.equal(f.get('elapsed').textContent, '02:30:00');
+  assert.match(f.get('elapsedLabel').textContent, /Historical duration.*includes setup/);
+});
+
+test('passing the 90-minute target does not Stop, change status or send another prompt', async () => {
+  const posts = [];
+  const record = {id:'job',workflow:'login-first',status:'RUNNING',phase:'EXECUTING',aiStartedAt:'2026-01-01T09:00:00Z'};
+  const f = fixture((path, options) => { if (options?.method) posts.push(path); return response(path, record); });
+  await turn();
+  await vm.runInContext('Date.now = () => Date.parse("2026-01-01T10:35:00Z"); refresh()', f.context);
+  assert.equal(f.get('elapsed').textContent, '01:35:00');
+  assert.equal(f.get('status').textContent, 'Running');
+  assert.deepEqual(posts, []);
+});
+
+test('invalid or reversed timestamps never display NaN or a negative execution time', async () => {
+  for (const aiStartedAt of ['invalid', '2026-01-01T11:00:00Z']) {
+    const f = fixture(path => response(path, {id:'job',workflow:'login-first',status:'STOPPED',aiStartedAt,finishedAt:'2026-01-01T10:30:00Z'}));
+    await turn();
+    assert.equal(f.get('elapsed').textContent, '00:00:00');
+  }
 });
 
 test('Clear/New RR waits for confirmed cleanup, clears persisted selection and grid, and never starts AI',async()=>{
@@ -143,7 +193,7 @@ test('poll cannot enable another upload during active reading or a pending reque
   await turn(); assert.equal(f.get('upload').disabled, true);
   await vm.runInContext('refresh()', f.context);
   assert.equal(f.get('upload').disabled, true);
-  assert.equal(f.get('cost').textContent, '$0.50 this run · $13.81 including prior spending');
+  assert.equal(f.get('cost').textContent, '$0.50 this run · $13.81 including prior spending · spending guard active');
 });
 
 test('clarification answer only goes to the live waiting job and is double-submit safe', async () => {

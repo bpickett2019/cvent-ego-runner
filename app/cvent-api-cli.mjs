@@ -3,12 +3,11 @@ import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { CAPABILITIES, CventConnection, ApiFailure } from "./cvent-api.mjs";
+import { CAPABILITIES, BLOCKED_OPERATIONS, CventConnection, ApiFailure } from "./cvent-api.mjs";
+import { runBulkAccessProbe } from "./cvent-bulk-probe.mjs";
 
-// Production RR writes are create-only. Keep the underlying adapter's legacy
-// update helpers for separate integrations, but never expose them as RR grants.
-const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name, route]) => route === "api-read" || ["configureDiscount", "configureVolumeDiscount"].includes(name)));
-const blockedOperations = Object.fromEntries(Object.keys(CAPABILITIES).filter(name => !Object.hasOwn(operations, name)).map(name => [name, "Preserve existing items and event settings; updates are prohibited"]));
+const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name]) => !Object.hasOwn(BLOCKED_OPERATIONS, name)));
+const blockedOperations = BLOCKED_OPERATIONS;
 const read = async path => JSON.parse(await readFile(path, "utf8"));
 async function save(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -17,11 +16,24 @@ async function save(path, value) {
 }
 async function main() {
   const operation = process.argv[2];
-  if (operation === "capabilities") {
-    console.log(JSON.stringify({ operations, blockedOperations, writeCapabilities: { configureDiscount: { mode: "create-only", supports: ["final-total codes", "new item-scoped codes with AdmissionItem/QuantityItem links"], existingItems: "preserve unchanged, including existing discount associations", verification: "complete API catalog and saved-state readback; never resend uncertain writes", limitations: ["no standalone link/update of existing discounts", "1–100 explicit scoped items per new code"] }, configureVolumeDiscount: { mode: "create-only", supports: ["new named event volume discounts", "initial AdmissionItem/QuantityItem links", "ALL/AFTER_THRESHOLD_LIMIT/BEFORE_THRESHOLD_LIMIT/EVERY_NTH_REGISTRANT"], existingItems: "preserve existing names, rules and associations; no standalone updates", verification: "complete catalogs, durable intent, independent readback; no uncertain replay", limitations: ["1–100 explicit scoped items if supplied", "explicit threshold, interval and primary-registrant flags required"] } }, preservation: "Never rename the event or edit originals. Reuse exact RR matches only; differences require separate RR-compliant creations. Never alter RR names/codes to evade uniqueness.", browser: "Same-identity variant creation is not supported by this adapter. Ego may create a separate RR-compliant object if Cvent supports it. Authentication, policy errors, rate limits and uncertain writes must not be bypassed", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
+  if (operation === "probeBulkAccess") {
+    const confirmed = process.argv.length === 4 && process.argv[3] === "--confirm-empty-job";
+    console.log(JSON.stringify(await runBulkAccessProbe({ root: resolve(new URL("..", import.meta.url).pathname), confirmed })));
     return;
   }
-  if (!Object.hasOwn(CAPABILITIES, operation)) throw new ApiFailure("Use a supported operation from cvent-api capabilities");
+  if (operation === "capabilities") {
+    console.log(JSON.stringify({ operations, blockedOperations, maintenanceOperations: { probeBulkAccess: { mode: "human-only-empty-job-access-check", confirmation: "--confirm-empty-job", limitation: "No records, run, cancellation or event writes. Actual bulk execution is not exposed." } }, writeCapabilities: {
+      updateEvent: { mode: "event-only-update", supports: ["description/note, dates/deadline, timezone, format, capacity, merged single venue, visibility"], limitations: ["fixed name; unchanged planners/languages/type/archive schedule"] },
+      updateEventBasics: { aliasOf: "updateEvent" },
+      updateRegistrationType: { mode: "event-only-update", supports: ["availability, opening/closing dates, capacity"], limitations: ["no shared name/code/description or contact-type definition edits"] },
+      enableEventFeature: { mode: "event-only-enable", supports: ["Website", "Registration"], limitations: ["preserve tier/config; no disable, payment changes or launch"] },
+      configureDiscount: { mode: "event-only-create-or-update", supports: ["final-total and item-scoped codes", "existing event-level values and additive AdmissionItem/QuantityItem links"], limitations: ["no link removal; exact code; 1–100 scoped items"] },
+      configureVolumeDiscount: { mode: "event-only-create-or-update", supports: ["named volume rules and additive scoped links"], limitations: ["no link removal; exact name; explicit threshold semantics"] }
+    }, preservation: "Fixed selected event/name and Draft; no deletion/archive, shared edits, other-event effects, communications or attendee access. Shared creation requires documented isolation; no isolated shared create route established in this adapter.", browser: "Documented coverage gaps only; never bypass failed/denied/uncertain API operations", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
+    return;
+  }
+  if (Object.hasOwn(blockedOperations, operation)) throw new ApiFailure(blockedOperations[operation]);
+  if (!Object.hasOwn(operations, operation)) throw new ApiFailure("Use a supported operation from cvent-api capabilities");
   if (!process.env.RR_WORKSPACE) throw new ApiFailure("A running approved RR job is required");
   const workspace = resolve(process.env.RR_WORKSPACE), runtimePath = join(workspace, "runtime.json");
   const job = await read(join(workspace, "job.json"));
@@ -29,11 +41,12 @@ async function main() {
   const runtime = await read(runtimePath);
   if (runtime.ownership !== "AGENT") throw new ApiFailure("Browser/execution control belongs to the user; API execution stopped");
   const uncertainPath = join(workspace, "api-write-uncertain.json");
-  const currentNamePath = join(workspace, "api-current-event.json");
+  // Historical api-current-event.json never changes this run's fixed target.
   const volume = operation === "configureVolumeDiscount";
   const discountOperation = volume || operation === "configureDiscount";
   const identityKey = volume ? "name" : "code";
   const discountStatePath = join(workspace, volume ? "api-volume-discounts.json" : "api-discounts.json");
+  if (existsSync(join(workspace, "browser-save-uncertain.json")) && CAPABILITIES[operation] === "api-write") throw new ApiFailure("A browser save is uncertain; API writes are blocked without replay");
   if (existsSync(uncertainPath) && CAPABILITIES[operation] === "api-write") throw new ApiFailure("This run's API write is uncertain. Stop; do not replay or use browser fallback");
   const chunks = []; let bytes = 0;
   for await (const chunk of process.stdin) { bytes += chunk.length; if (bytes > 100_000) throw new ApiFailure("API input too large"); chunks.push(chunk); }
@@ -47,11 +60,15 @@ async function main() {
   let dispatched = false;
   const receipt = { receiptId, operation, route: "api", eventId: job.target.apiEventId, rrReferences: input.rrReferences || [], startedAt: new Date().toISOString() };
   try {
-    if (!Object.hasOwn(operations, operation)) throw new ApiFailure("RR preservation policy prohibits updating existing items or event settings; reuse unchanged. Do not bypass through Ego");
-    const api = new CventConnection();
-    const currentName = existsSync(currentNamePath) ? await read(currentNamePath) : null;
-    if (currentName && currentName.eventId !== job.target.apiEventId) throw new ApiFailure("Saved API event name belongs to a different event");
-    const target = { ...job.target, name: currentName?.name || job.target.name };
+    const checkControl = async () => {
+      if (CAPABILITIES[operation] === "api-write" && existsSync(join(workspace, "browser-save-uncertain.json"))) throw new ApiFailure("Browser save uncertainty blocks API mutation");
+      const latestJob = await read(join(workspace, "job.json")), latest = await read(runtimePath);
+      const uncertainty = existsSync(uncertainPath) ? await read(uncertainPath) : null;
+      const ownIntent = uncertainty?.receiptId === receiptId && uncertainty?.eventId === job.target.apiEventId && uncertainty?.operation === operation;
+      if (latestJob.status !== "RUNNING" || !isDeepStrictEqual(latestJob.target, job.target) || latest.ownership !== "AGENT" || latest.runtimeId !== runtime.runtimeId || latest.activeTargetId !== runtime.activeTargetId || latest.steelSessionId !== runtime.steelSessionId || (dispatched ? !ownIntent : CAPABILITIES[operation] === "api-write" && uncertainty !== null)) throw new ApiFailure("Stop, takeover or unresolved API write blocks this mutation");
+    };
+    const api = new CventConnection({ mutationGuard: async () => { if (!dispatched) throw new ApiFailure("Mutation requires durable intent"); await checkControl(); } });
+    const target = { ...job.target };
     const data = structuredClone(input.data ?? input);
     let discountState = null, discountKey = null;
     if (discountOperation && data && typeof data[identityKey] === "string") {
@@ -65,7 +82,7 @@ async function main() {
       }
     }
     let createdId = null, finalized = false;
-    const sentLinks = new Set(), verifiedLinks = new Set();
+    const sentLinks = new Set(), verifiedLinks = new Set(), sentPaths = new Set();
     const result = await api.execute(target, operation, data, async prepared => {
       const root = `/events/${job.target.apiEventId}/discounts`;
       const create = !dispatched && prepared?.method === "POST" && prepared.path === root && prepared.baseline === null && prepared.body?.type === (volume ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE");
@@ -74,13 +91,20 @@ async function main() {
       const finalize = createdId && !finalized && prepared?.phase === "FINALIZE_NEW_DISCOUNT" && prepared.method === "PUT" && prepared.discountId === createdId && prepared.baseline?.id === createdId && prepared.path === `${root}/${createdId}` &&
         data.agendaItems?.length > 0 && data.agendaItems.every(item => verifiedLinks.has(`${item.type}:${item.id}`)) &&
         isDeepStrictEqual(prepared.body, { ...receipt.prepared.body, active: data.patch.active, ...(volume ? {} : { applyToAllAgendaItems: true }) });
-      if (!discountOperation || !(create || link || finalize)) throw new ApiFailure("RR preservation policy permits only confirmed-missing discount creation and its initial configuration; existing-item writes are prohibited");
+      const existingDiscount = discountOperation && prepared?.baseline?.level === "EVENT" && prepared.baseline.type === (volume ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE") && prepared.baseline[identityKey] === data[identityKey] && prepared.discountId === prepared.baseline.id && (!data.discountId || data.discountId === prepared.discountId) && (!prepared.baseline.event?.id || prepared.baseline.event.id === job.target.apiEventId) && prepared.method === "PUT" && (
+        prepared.phase === "UPDATE_DISCOUNT" && prepared.path === `${root}/${prepared.discountId}` ||
+        prepared.phase === "ADD_DISCOUNT_ITEM" && data.agendaItems?.some(item => isDeepStrictEqual(item, prepared.agendaItem)) && prepared.path === `${root}/${prepared.discountId}/agenda-items/${prepared.agendaItem.id}`
+      );
+      const eventRoot = `/events/${job.target.apiEventId}`;
+      const scopedUpdate = !dispatched && prepared?.method === "PUT" && (
+        ["updateEvent", "updateEventBasics"].includes(operation) && prepared.phase === "UPDATE_EVENT" && prepared.path === eventRoot && prepared.baseline?.id === job.target.apiEventId && prepared.body?.title === prepared.baseline.title && prepared.baseline.title === job.target.name ||
+        operation === "updateRegistrationType" && prepared.phase === "UPDATE_REGISTRATION_TYPE" && prepared.path === `${eventRoot}/registration-types/${data.registrationTypeId}` && prepared.baseline?.id === data.registrationTypeId && prepared.body?.id === data.registrationTypeId ||
+        operation === "enableEventFeature" && prepared.phase === "ENABLE_EVENT_FEATURE" && ["Website", "Registration"].includes(data.type) && prepared.path === `${eventRoot}/features/${data.type}` && prepared.baseline?.type === data.type && prepared.body?.enabled === true
+      );
+      if (!(create || link || finalize || existingDiscount || scopedUpdate) || sentPaths.has(`${prepared.method} ${prepared.path}`)) throw new ApiFailure("Prepared write is outside the scoped operation or was already dispatched; no replay");
       if (!Array.isArray(input.rrReferences) || !input.rrReferences.length || !input.rrReferences.every(value => typeof value === "string" && value.trim())) throw new ApiFailure("API writes require RR source references");
-      const latestJob = await read(join(workspace, "job.json"));
-      const latest = await read(runtimePath);
-      const uncertainty = existsSync(uncertainPath) ? await read(uncertainPath) : null;
-      const ownIntent = uncertainty?.receiptId === receiptId && uncertainty?.eventId === job.target.apiEventId && uncertainty?.operation === operation;
-      if (latestJob.status !== "RUNNING" || latestJob.target?.apiEventId !== job.target.apiEventId || latest.ownership !== "AGENT" || latest.runtimeId !== runtime.runtimeId || latest.activeTargetId !== runtime.activeTargetId || latest.steelSessionId !== runtime.steelSessionId || (dispatched ? !ownIntent : uncertainty !== null)) throw new ApiFailure("Stop, takeover or unresolved API write blocks this mutation");
+      await checkControl();
+      sentPaths.add(`${prepared.method} ${prepared.path}`);
       receipt.requested = input.data ?? input;
       receipt.prepared ??= prepared;
       (receipt.preparedWrites ??= []).push(prepared);
@@ -96,13 +120,15 @@ async function main() {
       if (!createdId && receipt.prepared.method === "POST" && evidence.phase === "READBACK" && evidence.matched && evidence.saved?.id === evidence.discountId && evidence.saved?.type === receipt.prepared.body.type && evidence.saved?.[identityKey] === receipt.prepared.body[identityKey]) createdId = evidence.discountId;
       if (evidence.phase === "LINK_READBACK" && evidence.matched && evidence.discountId === createdId) for (const key of evidence.links) verifiedLinks.add(key);
     });
-    await save(receiptPath, { ...receipt, status: result.requirementsSatisfied === false ? "CREATION_REQUIRED" : "PASS", completedAt: new Date().toISOString(), result });
+    await checkControl();
+    if (dispatched && result.verified !== true) throw new ApiFailure("Mutation result lacks saved verification; retain uncertainty");
+    await save(receiptPath, { ...receipt, status: "PASS", completedAt: new Date().toISOString(), result });
     if (discountState && result.verified && result.discountId) {
       discountState.discounts = { ...discountState.discounts, [discountKey]: result.discountId };
       await save(discountStatePath, discountState);
     }
     if (dispatched) {
-      if (operation === "updateEvent" && result.saved?.title) await save(currentNamePath, { eventId: job.target.apiEventId, name: result.saved.title, receipt: receiptPath });
+      await checkControl();
       const { unlink } = await import("node:fs/promises");
       await unlink(uncertainPath);
     }

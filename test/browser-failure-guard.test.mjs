@@ -34,6 +34,11 @@ test('unconfirmed page execution trips immediately and requires uncertainty rete
   assert.equal(result.tripped,true);assert.equal(result.executionUncertain,true);assert.match(result.stopReason,/late effects/);
   assert.equal(new BrowserFailureGuard().observe(error('safe','PageEvaluationTimeoutError: executionStopped: true'),0).executionUncertain,false);
 });
+test('unknown save outcome stops immediately; a pending save does not trip the circuit',()=>{
+  const result=new BrowserFailureGuard().observe(error('save','BrowserSaveUncertainError: unknown'),0);
+  assert.equal(result.tripped,true);assert.equal(result.executionUncertain,true);
+  assert.equal(new BrowserFailureGuard().observe(error('pending','SavePendingError: Saving is visible'),0),null);
+});
 test('normal reads, successful tools and unrelated errors never trigger a write quota or failure stop',()=>{
   const guard=new BrowserFailureGuard();
   for(let i=0;i<100;i++){
