@@ -14,7 +14,7 @@ The executable contract is [CVENT-API.md](CVENT-API.md). Existing selected-event
 | Contact types | Shared-definition reads through `listContactTypes`; public schema is GET-only. No supported isolated creation route established. |
 | Event custom fields | `listEventCustomFieldDefinitions` reads definitions. Account-wide creation has unproven isolation. Answer writes remain blocked because integration identifiers cannot safely be distinguished. |
 | Admissions, fee schedules, registration paths, questions/choices, optional items, vouchers, general advanced rules | Catalog reads where documented; no reviewed public catalog-authoring routes. Use assigned Ego for supported event-only workflows, including existing admission edits. Browser permission is not proof of workflow coverage. |
-| Website, branding/assets, theme/header/footer, RR-required widgets | No reviewed public authoring route. Assigned Ego; Site Designer last, Continue never Restore. Build only RR-required widget types, not every available widget. |
+| Website, branding/assets, theme/header/footer, RR-required widgets | No reviewed public authoring route. Assigned Ego; Pi chooses editor order. Continue retains current work; do not Restore historical state as a workaround. Build only RR-required widget types, not every available widget. |
 | Attendee operations, sessions/speakers, account/payment provisioning, communications, publish/delete/archive | Outside scope; no enabled authoring routes. |
 
 All API mutations retain fresh baselines, event/resource binding, RR references, durable intent, ownership checks, acknowledgment, saved verification, locks and uncertainty/no replay. Unknown or potentially lossy baselines fail closed. No unrestricted HTTP transport or invented endpoints.

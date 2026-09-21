@@ -1,4 +1,4 @@
-# Assigned Steel session: project restrictions
+# Ego on the assigned Steel session
 
 The unmodified Ego v2.0.0 skill and API reference run on upstream Ego commit
 `dca7003349c5f7132189ba00547cbbd7ff8e597e`, through the existing Steel host.
@@ -61,8 +61,9 @@ or select another browser or profile to resolve a missing host capability.
   establish the outcome, stop and retain uncertainty without replay. This does not
   defer Stop for crash/disconnect, unconfirmed tool execution, identity/ownership loss,
   expired login, exposed secrets or operator Stop, or reopen a previously stopped save.
-- Project save helpers (not upstream Page methods): prefer `saveOnce(page, saveRef, options)`
-  for a new Save in project `ego-browser nodejs` scripts. Preserve exact intended
+- Optional project save helpers (not upstream Page methods): `saveOnce(page, saveRef, options)`
+  is available for a new Save in project `ego-browser nodejs` scripts. Normal Page
+  actions and documented waits remain available; no helper is mandatory. Preserve exact intended
   values, relationships and relevant defaults in workspace evidence first. Ground
   the Save locator and actual CSS selectors from the current UI **before** saving.
   Supply `completionSelector` and, when observed, `pendingSelector`,
@@ -108,10 +109,12 @@ or select another browser or profile to resolve a missing host capability.
   Never delete/archive anything, including new objects, widgets, rules or links.
   This authorization does not unlock blocked navigation or operations. Do not probe
   or bypass a guard; report the specific tool limitation. Keep the event Draft.
-- Complete, save and independently verify one object and its dependencies before
-  exploring unrelated editors. Check uniqueness, type assignment and shared/global
-  settings before authoring; creating a new template does not prove field isolation.
-  A concrete blocker skips dependent work, not independent executable requirements.
+- Pi chooses editor order and task grouping. Verify saved values and dependencies;
+  creating a new template does not prove field isolation. A concrete blocker skips
+  dependent work, not independent executable requirements.
+  In Site Designer, Continue retains current work; Restore can replace it. Do not
+  restore historical state as a workaround. Website requirements do not necessarily
+  require enabling Cvent's separate Website feature; inspect the applicable editor.
 - Every upload is a fresh execution from its workbook and live saved event state,
   not a continuation of earlier tasks or browser position. Historical evidence
   does not instruct this run. Never change uncertainty records or ownership gates.
@@ -132,9 +135,10 @@ or select another browser or profile to resolve a missing host capability.
   assigned browser to work around a capability gap.
 - The skill's general fetch/CDP examples do not authorize custom API authoring,
   direct connections, prohibited actions, unassigned targets or bypassing guards.
-  Supported Cvent operations use the existing `$CVENT_API_BIN` adapter first;
-  only documented API-unsupported work uses Ego. The job's approved SOW governs
-  authorization; SDK capabilities do not expand it.
+  Pi may choose Ego or the supported `$CVENT_API_BIN` adapter without an API-first
+  requirement. An explicit denial or uncertain write still cannot be rerouted to
+  the other tool. The job's approved SOW governs authorization; SDK capabilities
+  do not expand it.
 
 The patch is also saved as `ego-bridge/patches/steel-session-ledger.patch` so
 it survives a fresh submodule checkout. From the project root, on an unpatched

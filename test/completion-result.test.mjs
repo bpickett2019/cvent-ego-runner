@@ -14,7 +14,26 @@ function fixture(t) {
   return { workspace, path, save: value => writeFileSync(path, JSON.stringify(value)), result: () => reportedCompletion(workspace, 'selected') };
 }
 
-test('DONE requires explicit verified website, registration, dependencies and Draft for this event', t => {
+test('native Pi reports verified applicable requirements and Draft without category flags', t => {
+  const f = fixture(t);
+  const report = { ...complete(), completion: { requirements: true, draft: true } };
+  f.save(report); assert.equal(f.result(), 'DONE');
+  for (const key of ['requirements', 'draft']) for (const value of [undefined, false, null, 'true', 1]) {
+    f.save({ ...report, completion: { ...report.completion, [key]: value } }); assert.equal(f.result(), 'INCOMPLETE');
+  }
+  for (const change of [{ eventId: 'other' }, { blockers: ['missing RR input'] }, { untested: ['saved link'] }, { uncertainWrites: ['Save'] }]) {
+    f.save({ ...report, ...change }); assert.equal(f.result(), 'INCOMPLETE');
+  }
+  for (const key of ['website', 'registration', 'dependencies']) {
+    f.save({ ...report, completion: { ...report.completion, [key]: false } }); assert.equal(f.result(), 'INCOMPLETE');
+  }
+  f.save(report);
+  for (const name of ['api-write-uncertain.json', 'browser-save-uncertain.json', 'api-operation.lock', 'operation.lock']) {
+    const p = join(f.workspace, name); writeFileSync(p, '{}'); assert.equal(f.result(), 'INCOMPLETE'); rmSync(p);
+  }
+});
+
+test('legacy reports retain website, registration, dependencies and Draft interpretation', t => {
   const f = fixture(t); f.save(complete()); assert.equal(f.result(), 'DONE');
   for (const key of ['website', 'registration', 'dependencies', 'draft']) {
     for (const value of [undefined, false, 'true', 'VERIFIED', 1]) {

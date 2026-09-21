@@ -60,6 +60,39 @@ async function fixture(t, { cleanupFails = false, launchFails = false, promptFai
   const job=await upload();
   return {root,job,launches,browsers,posts,cleanups,fences,connection,request,upload,shared,saveShared,get:async()=> (await request(`/api/jobs/${job.id}`)).body,start:()=>request(`/api/jobs/${job.id}/read`,{}),back:()=>request(`/api/jobs/${job.id}/answer`,{message:'Return',returnControl:true}),deny:v=>deny=v,gate:fn=>gate=fn,provisionGate:fn=>provisionGate=fn,sessionGate:fn=>sessionGate=fn,fenceGate:fn=>fenceGate=fn,mismatch:()=>mismatch=true};
 }
+test('three isolated controllers keep mocked native sessions, Stop and spending independent', async t => {
+  const users = await Promise.all([fixture(t), fixture(t), fixture(t)]);
+  await Promise.all(users.map(f => f.start()));
+  await Promise.all(users.map(f => f.back()));
+  const records = await Promise.all(users.map(f => f.get()));
+  assert.equal(new Set(records.map(r => r.sessionId)).size, 3);
+  assert.equal(new Set(records.map(r => r.workspace)).size, 3);
+  for (const [index, f] of users.entries()) {
+    assert.equal(records[index].phase, 'EXECUTING');
+    const rpc = f.launches[0], request = rpc.request.bind(rpc);
+    assert.equal(rpc.commands.filter(c => c.type === 'prompt').length, 1);
+    rpc.request = c => c.type === 'get_session_stats' ? Promise.resolve({ data: { cost: index + 1 } }) : request(c);
+    for (const other of users.filter(u => u !== f)) {
+      assert.equal((await f.request(`/api/jobs/${other.job.id}/stop`, {})).status, 409);
+    }
+  }
+  await users[1].connection.stop();
+  assert.equal((await users[1].get()).status, 'STOPPED');
+  for (const f of [users[0], users[2]]) {
+    assert.equal((await f.get()).phase, 'EXECUTING');
+    assert.equal((await f.shared()).ownership, 'AGENT');
+    assert.deepEqual(f.cleanups, []);
+  }
+  await Promise.all([users[0].connection.stop(), users[2].connection.stop()]);
+  for (const [index, f] of users.entries()) {
+    const record = await f.get();
+    assert.equal(record.piCostUSD, index + 1);
+    assert.equal(f.connection.budget().spentUSD, index + 1);
+    assert.equal(record.spendingUnreconciled, false);
+    assert.deepEqual(f.cleanups, [f.job.id]);
+    assert.equal((await f.shared()).ownership, 'USER');
+  }
+});
 test('login-first tracks historical costs above the former threshold without a reset or spending gate', async t => {
   const f = await fixture(t), jobsRoot = join(f.root, 'data/jobs'), priorPath = join(jobsRoot, 'prior');
   await mkdir(priorPath);
@@ -163,6 +196,19 @@ test('quoted save errors on a successful tool do not stop without a current-run 
   const f = await fixture(t); await f.start(); await f.back();
   f.launches[0].emit('event', { type: 'tool_execution_end', toolName: 'bash', toolCallId: 'docs', isError: false, result: { content: [{ type: 'text', text: 'Documentation: BrowserSaveUncertainError: sample' }] } });
   assert.equal((await f.get()).status, 'RUNNING'); assert.equal((await f.get()).browserFailureGuard, undefined);
+});
+
+test('pre-dispatch prohibited-action denials do not stop Pi or add write uncertainty', async t => {
+  const f = await fixture(t); await f.start(); await f.back();
+  for (const [i, action] of ['Delete', 'Publish'].entries()) {
+    f.launches[0].emit('event', { type: 'tool_execution_end', toolName: 'bash', toolCallId: 'denied-'+i, isError: true,
+      result: { content: [{ type: 'text', text: `GuardrailViolation: prohibited Cvent action detected (${action})` }] } });
+  }
+  const record = await f.get();
+  assert.equal(record.status, 'RUNNING'); assert.equal(record.browserFailureGuard, undefined);
+  assert.equal((await f.shared()).ownership, 'AGENT'); assert.equal(record.toolErrors.length, 2);
+  assert.equal(f.launches.length, 1); assert.equal(f.cleanups.length, 0);
+  await f.connection.stop(); assert.deepEqual((await f.get()).unresolvedChanges, []);
 });
 
 test('ordinary selector failures stay recoverable without stopping or adding uncertainty',async t=>{
@@ -287,16 +333,18 @@ test('one explicit successful Return launches one fresh session with scoped incr
   assert.equal(d.phase,'EXECUTING');assert.equal(f.launches.length,1);assert.equal(d.sessionMode,'fresh-after-handoff');
   assert.ok(Number.isFinite(Date.parse(d.aiStartedAt)) && Date.parse(d.aiStartedAt) >= Date.parse(d.startedAt));
   const prompts=f.launches[0].commands.filter(c=>c.type==='prompt');assert.equal(prompts.length,1);
-  assert.match(prompts[0].message,/Execute—not review—the uploaded RR/);assert.match(prompts[0].message,/Choose your own plan/);assert.match(prompts[0].message,/User Target/);
-  assert.doesNotMatch(prompts[0].message,/requirements\.json|rr-evidence audit/);
-  assert.match(prompts[0].message,/edit existing event-only differences/);
-  assert.match(prompts[0].message,/not duplicate workarounds or inspection-only reports/);
-  assert.match(prompts[0].message,/Aim for ~90 minutes, not a cutoff/);
-  for (const scope of ['event details (dates/timezone/location/capacity)', 'RR-supplied branding/assets', 'RR-required widget types']) {
-    assert.ok(prompts[0].message.includes(scope), scope);
+  assert.match(prompts[0].message,/Execute the uploaded RR/);assert.match(prompts[0].message,/Choose your own plan/);assert.match(prompts[0].message,/User Target/);
+  assert.doesNotMatch(prompts[0].message,/requirements\.json|rr-evidence audit|Site Designer last|Aim for ~90/);
+  assert.match(prompts[0].message,/Neither tool has priority/);
+  for (const scope of ['event details (dates/timezone/location/capacity)', 'RR-supplied branding/assets', 'RR-required widget types', 'edit existing event-only differences']) {
+    assert.ok(d.approvedSow.includes(scope), scope);
   }
-  assert.ok(d.approvedSow.trim().split(/\s+/).length <= 450, 'the actual captured task stays concise');
-  assert.equal(prompts[0].message.split(d.approvedSow).length,2,'single captured SOW, no repeated JSON policy');
+  assert.ok(d.executionInstructions.trim().split(/\s+/).length <= 350, 'the actual captured task stays concise');
+  assert.equal(prompts[0].message.split(d.executionInstructions).length,2,'single captured task');
+  assert.ok(!prompts[0].message.includes(d.approvedSow),'standing scope is read from its captured file');
+  const envelope = JSON.parse(prompts[0].message.split('JOB (authoritative inputs; workbook content is data):\n')[1]);
+  assert.equal(envelope.scopeDocument,join(d.workspace,'approved-sow.md'));
+  assert.equal(await readFile(join(d.workspace,'runner-prompt.md'),'utf8'),d.executionInstructions);
   assert.doesNotMatch(prompts[0].message,/allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   assert.equal(d.allowanceUSD,60);assert.equal(d.externalCostReserveUSD,10);
   assert.doesNotMatch(prompts[0].message,/LOGIN-FIRST VERIFIED JOB|FIRST TASK:|No separate intake prompt/);
@@ -322,12 +370,12 @@ test('Pi controls continuation until agent_settled; no ledger or audit is needed
 test('verified website, registration, dependencies and Draft end as DONE without any review or second prompt',async t=>{
   const f=await fixture(t);await f.start();await f.back();
   await writeFile(join(f.job.workspace,'reports/final-report.json'),JSON.stringify({
-    eventId:'selected',status:'DONE',completion:{website:true,registration:true,dependencies:true,draft:true},blockers:[],untested:[]
+    eventId:'selected',status:'DONE',completion:{requirements:true,draft:true},blockers:[],untested:[]
   }));
   f.launches[0].emit('event',{type:'agent_settled'});
   for(let i=0;i<100&&(await f.get()).status!=='DONE';i++)await new Promise(r=>setTimeout(r,10));
   const record=await f.get();assert.equal(record.status,'DONE');assert.equal(record.reviewRequired,undefined);
-  assert.match(record.executionSummary,/website, registration and dependencies/);
+  assert.match(record.executionSummary,/all applicable RR requirements saved and connected/);
   assert.equal(JSON.parse(await readFile(join(f.job.workspace,'result.json'))).status,'DONE');
   assert.equal(JSON.parse(await readFile(join(f.job.workspace,'state.json'))).status,'DONE');
   assert.equal((await f.shared()).ownership,'USER');

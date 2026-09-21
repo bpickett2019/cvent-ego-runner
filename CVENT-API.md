@@ -1,8 +1,8 @@
-# Cvent API first; Steel/Ego for documented coverage gaps
+# Supported Cvent API tools
 
 ## Current authorization and executable contract
 
-Use `"$CVENT_API_BIN" capabilities` for the production operation map. API-first includes authoring and independent saved verification, not just snapshots. One fresh native Pi session owns RR interpretation and execution; this adapter is transport/validation/evidence, not another agent or SDK-building task.
+Use `"$CVENT_API_BIN" capabilities` for the production operation map. Pi chooses between these supported tools and Ego/Steel; there is no API-first requirement. One fresh native Pi session owns RR interpretation and execution; this adapter is transport/validation/evidence, not another agent or SDK-building task.
 
 Across the entire approved event-build SOW, create or modify existing objects, settings and relationships when event-only, including admissions. Reuse exact RR matches. Never modify existing shared/account-wide objects or definitions; reuse an exact shared match or create a separate required shared build object only when its isolation is established. An event URL, label, catalog membership or new template alone is not proof. Event-only registration availability/capacity differs from shared contact-type names/codes. **Never delete/archive anything**, including new objects and links. No replacement payload may silently remove existing configuration. Fixed selected-event identity/name, Draft, no other-event changes, communications, attendee/registrant access or sessions/speakers work remain mandatory.
 
@@ -92,9 +92,9 @@ Use current documentation/catalog evidence, not assumptions or speculative save 
 
 Turn comparison into execution: reuse verified exact matches; update supported existing event-only differences; create only genuinely missing required objects with complete inputs. Do not stop at a comparison report or duplicate an existing admission to avoid editing it. Admission-item authoring is a documented API gap: use the supported assigned Ego workflow after proving scope, not an invented API call. Compare all applicable values and relationships, not just names/IDs. Verify saved fields and connections after each change; clicks, toasts and accepted requests are not proof.
 
-Complete independent supported API work before unrelated UI exploration; a necessary UI dependency may come first. Group work by shared dependencies and observed page context to avoid repeated navigation, without batching across uncertain execution or skipping per-write verification. A concrete blocked workflow need not be repeatedly probed without new input/evidence; continue independent requirements instead. This does not certify browser coverage or change any denial/Stop rule.
+Pi chooses tool order and task grouping, without batching across uncertain execution or skipping per-write verification. A concrete blocked workflow need not be repeatedly probed without new input/evidence; continue independent requirements instead. This does not certify browser coverage or change any denial/Stop rule.
 
-Fetch each needed complete catalog and compare RR rows locally with Python/`rr-evidence`, explicit field mappings and exceptions-only output; complete evidence stays local. Separate literal display text from embedded authoring instructions. Identity matches alone are not satisfaction. Refresh for saved-state verification. No mandatory route plan, ledger schema, checklist engine or automatic audit. Site Designer LAST; Continue, not Restore, at a checkpoint. Run DONE concerns only applicable event-build SOW work, connected, verified and saved Draft; broader project delivery is not a prerequisite.
+Fetch each needed complete catalog and compare RR rows locally with Python/`rr-evidence`, explicit field mappings and exceptions-only output; complete evidence stays local. Separate literal display text from embedded authoring instructions. Identity matches alone are not satisfaction. Refresh for saved-state verification. No mandatory route plan, ledger schema, checklist engine or automatic audit. In Site Designer, Continue retains current work; do not Restore historical state as a workaround. Run DONE concerns only applicable event-build SOW work, connected, verified and saved Draft; broader project delivery is not a prerequisite.
 
 ## Stop, evidence, privacy and activation
 

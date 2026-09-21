@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let jobId = sessionStorage.getItem("rrJobId");
 let job = null, submitting = false, handoffPending = false, stopping = false;
+let workspaceLabel = "USER 1", localWorkspaces = null;
 let browserOwnership = null, takingControl = false, viewerRuntimeId = null, viewerStopped = false, loginFirstAvailable = false;
 let workbook = null, draftLoading = false, edits = new Map(), previewEpoch = 0, jobs = [];
 const active = () => job && ["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(job.status);
@@ -118,7 +119,7 @@ async function refresh() {
     $("eventTitle").textContent = target || "Name your target Cvent event";
     $("targetStatus").textContent = active() ? `${verified ? "Verified" : "Verification pending"}: ${target || "No upload-bound target"}` : "Enter the exact existing event name below. Never inferred from the RR.";
     $("bindingNote").textContent = active() ? `Bound to this run: ${target}. Stop and upload again to change it.` : "Target is locked to this upload when you start. A different RR name never changes it.";
-    $("loginStatus").textContent = verified && runtime.ownership === "AGENT" ? "USER 1 · Event login verified" : "USER 1 · Human login / verification";
+    $("loginStatus").textContent = verified && runtime.ownership === "AGENT" ? `${workspaceLabel} · Event login verified` : `${workspaceLabel} · Human login / verification`;
     $("plan").textContent = job ? `${job.createdAt || ""}  Uploaded RR workbook: ${job.originalName}` : "No RR uploaded.";
     $("status").textContent = active() ? (job.workflow === "login-first" && !job.aiStartedAt ? "AI NOT STARTED · $0 this run" : job.phase === "AWAITING_INPUT" ? "WAITING FOR YOU" : "Running") : statusLabel(job?.status) || "Not running";
     const executing = active() && job.phase === "EXECUTING";
@@ -322,14 +323,54 @@ $("saveWorkbook").onclick = async () => {
   } catch (error) { message(error.message, true); }
   finally { draftLoading = false; renderControls(); }
 };
+async function configureLocalWorkspaces() {
+  const response = await fetch('/local-workspaces.json', { cache: 'no-store' });
+  if (response.status === 404) return; // Normal single-user deployment remains unchanged.
+  if (!response.ok) throw new Error('Local workspace configuration unavailable');
+  const { localWorkspaceConfig } = await import('/workspace-config.js');
+  localWorkspaces = localWorkspaceConfig(await response.json(), location.origin);
+  workspaceLabel = localWorkspaces.label;
+  document.title = `Forge · ${workspaceLabel} · Local workspace`;
+  const switcher = document.querySelector('.workspace-switcher');
+  switcher.dataset.localMulti = 'true';
+  switcher.querySelector('p').textContent = '3 separate local workspaces · click to switch';
+  const buttons = switcher.querySelectorAll('.profile');
+  for (const [index, workspace] of localWorkspaces.workspaces.entries()) {
+    const button = buttons[index], selected = workspace.id === localWorkspaces.current;
+    button.disabled = false; button.classList.toggle('selected', selected);
+    button.title = `Open ${workspace.label}'s separate dashboard and browser`;
+    button.setAttribute('aria-label', `Open User ${workspace.id} workspace`);
+    if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+    button.replaceChildren(document.createTextNode(`${selected ? '● ' : ''}${workspace.label} `), node('span', selected ? 'SELECTED' : 'OPEN'));
+    button.onclick = () => {
+      if (submitting || stopping || draftLoading || takingControl) return message('Wait for this action to finish before switching workspaces.', true);
+      if (selected) return $("workspace").scrollIntoView({ behavior: 'smooth' });
+      if (edits.size && !confirm('Switch workspaces and discard unsaved cell edits? Running jobs continue in their own workspace.')) return;
+      location.assign(workspace.url);
+    };
+  }
+  document.querySelector('.profile-pill').firstChild.textContent = `${workspaceLabel} `;
+  for (const pill of document.querySelectorAll('.tiny-pill')) {
+    if (pill.textContent === 'USER 1 · PROFILE 1') pill.textContent = `${workspaceLabel} · PRIVATE BROWSER`;
+  }
+  document.querySelector('.local-user small').textContent = 'Local preview · separate apps, same OS user';
+  document.querySelector('.staging-banner').textContent = `${workspaceLabel} · LOCAL PREVIEW · AI DISABLED`;
+}
 async function initialize() {
   const epoch = previewEpoch;
+  try { await configureLocalWorkspaces(); }
+  catch (error) { message(error.message, true); }
   await refresh();
   if (epoch !== previewEpoch) return;
   try {
     const history = await api("/api/jobs");
     if (epoch !== previewEpoch) return;
     jobs = Array.isArray(history) ? history : [];
+    // A new local-preview tab must expose its own active job's controls.
+    if (localWorkspaces && !jobId) {
+      const running = jobs.filter(item => ['PREPARING', 'STARTING', 'RUNNING', 'STOPPING'].includes(item.status));
+      if (running.length === 1) { jobId = running[0].id; sessionStorage.setItem('rrJobId', jobId); }
+    }
     const savedId = sessionStorage.getItem("rrWorkbookId");
     if (/^[0-9a-f-]{36}$/.test(savedId || "")) {
       const saved = await api(`/api/workbooks/${savedId}`);

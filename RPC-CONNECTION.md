@@ -10,7 +10,7 @@ Transport and lifecycle only. Native Pi owns reasoning, tools, planning, compact
 - Start provisions an empty per-job profile/container using the existing local pinned Steel image. Bootstrap only opens the neutral Cvent entry page; it never types credentials or configures an event.
 - Human Return verifies login, explicit incident attestation when required, exact API/browser event identity, ownership, source integrity and resource/accounting safety. From the neutral Events list, restricted navigation may open only the API-confirmed event. Wrong-event navigation is not silently corrected.
 - One native process launches with required `PI_PROVIDER` / `PI_MODEL`, low thinking, project `bin` on PATH, `--no-context-files`, and the explicitly pinned Ego skill. Native system prompt, tools and extensions remain unchanged; development context files are excluded.
-- RPC confirms an idle, empty, changed session with zero messages/pending work/cost before the sole execution prompt. `app/runner-prompt.md` is captured for the new job; `app/run-policy.mjs` appends only authoritative job inputs. Historical conversations, reports, recovery tasks and budget coaching are not injected.
+- RPC confirms an idle, empty, changed session with zero messages/pending work/cost before the sole execution prompt. `app/native-task.md` and `app/standing-sow.md` are captured as the job's `runner-prompt.md` and `approved-sow.md`. The sole task points to that scope file; `app/run-policy.mjs` appends only authoritative job inputs. Neither API-first routing nor editor order is prescribed. Historical conversations, reports, recovery tasks and budget coaching are not injected.
 - The app waits for native `agent_settled`, not intermediate `agent_end`. No paid intake, prepared-session pool, replacement executor, automatic continuation, completion audit or second agent. Human `steer`/`follow_up` messages use the same live session.
 - At most one executing job. Duplicate handoffs and Stop/provision/Return races are guarded. Missing login-first dependencies fail at mount rather than enabling a legacy path.
 
@@ -21,12 +21,12 @@ Saved Cvent state is inspected against each fresh RR; “fresh” does not delet
 Pi saves `state.json`, receipts, unresolved changes when needed, and `reports/final-report.md` / `reports/final-report.json`. The minimum DONE result is:
 
 ```json
-{"eventId":"<authorizedEvent.apiEventId>","status":"DONE","completion":{"website":true,"registration":true,"dependencies":true,"draft":true},"blockers":[],"untested":[]}
+{"eventId":"<authorizedEvent.apiEventId>","status":"DONE","completion":{"requirements":true,"draft":true},"blockers":[],"untested":[]}
 ```
 
-Flags concern applicable RR requirements within the event-build SOW, not a default widget/category checklist. Explain genuinely non-applicable areas in Markdown; their flags may be true, but Draft always requires verification. Blocked/untested work is not N/A. Unrelated RR/whole-project exclusions belong separately in Markdown, not JSON blocker arrays. An in-scope dependency needing prohibited work remains blocked.
+Pi determines which requirements apply within the standing SOW; `requirements` attests they are implemented, connected and independently verified. No category flags or widget checklist are imposed. Explain genuinely non-applicable areas in Markdown; Draft always requires verification. Blocked/untested work is not N/A. Unrelated RR/whole-project exclusions belong separately in Markdown, not JSON blocker arrays. An in-scope dependency needing prohibited work remains blocked.
 
-After native settlement and cleanup, DONE requires the bound event ID, explicit DONE, all four strict `true` flags, empty blocker/untested arrays, and no retained current-run uncertainty/operation locks or cleanup/metering failures. Missing, malformed, oversized, linked, wrong-event or contradictory results cannot pass. Ordinary incomplete results become INCOMPLETE; interruptions/cleanup failures are STOPPED. Historical FINISHED/REVIEW_REQUIRED labels display as INCOMPLETE without rewriting saved history.
+After native settlement and cleanup, DONE requires the bound event ID, explicit DONE, both strict `true` flags, empty blocker/untested arrays, and no retained current-run uncertainty/operation locks or cleanup/metering failures. Missing, malformed, oversized, linked, wrong-event or contradictory results cannot pass. Ordinary incomplete results become INCOMPLETE; interruptions/cleanup failures are STOPPED. Historical FINISHED/REVIEW_REQUIRED labels display as INCOMPLETE without rewriting saved history. Legacy reports using website/registration/dependencies/draft flags retain their old interpretation.
 
 **This checks report consistency and safety, not semantic RR truth.** Pi must independently verify saved results. Offline tests do not prove full live SOW completion.
 

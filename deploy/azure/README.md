@@ -1,6 +1,66 @@
 # Azure three-instance deployment preparation
 
-**Status: three Azure VMs provisioned, source/dependencies installed and verified;
+## Requested public staging cutover (2026-09-21)
+
+User authorized replacing `https://staging.app-chartsdarts-dashboard.com/` with
+this three-workspace UI and pushing the source to private GitHub. Provider choice:
+**Anthropic Sonnet 5**, team Key Vault secret to be supplied in the morning.
+Verify exact model ID/availability before enabling paid execution; never copy
+personal OAuth or automatically start a paid trial.
+
+**Not published yet.** The existing hostname terminates at Caddy on
+`cvent-pi-dev-vm`, with one Basic account and an existing Python app at loopback
+8877. Its separate restricted-access policy has expired. Six persisted jobs are
+`login_required`, with zero worker/event leases; that is not six verified active
+paid workers. Approval is needed to settle those waiting jobs preserving all
+evidence and renew the restricted-access window (proposed 24 hours) before
+cutover. Do not drop the expiry merely because Caddy Basic auth still works.
+No cloud config/service/network/IAM/auth mutation has been made. Sanitized
+preflight evidence: `logs/azure-staging-ui/` (private).
+
+The new local switcher is loopback-only. Public publication still requires
+protected routing, per-workspace API/viewer/WebSocket and client-storage
+separation, and backend loopback isolation; it cannot just expose local ports.
+The old gateway host is AMD64; retain the pinned ARM64 Steel image on the three
+dedicated ARM VMs. Source staging below predates the latest clickable UI.
+
+## Current source refresh (2026-09-21)
+
+User requested this exact simplified setup for three users. All three existing
+staged VMs now contain the current native-Pi launcher, **318-word task**, standing
+SOW, unchanged pinned Ego/Steel bridge and supported API tools. The missing
+`bin/rr-evidence` packaging entry was added. **15 source files changed per VM**;
+all manifested source hashes match the new snapshot, dependencies/vendor/image
+remain unchanged, and each VM's existing data is byte-identical. No local runtime
+source, process, active build, personal Pi authentication or existing Azure service
+was modified. This is not three-user live acceptance.
+
+Snapshot SHA256:
+`c4085c0457ab458bc8f324f09139cafd6c996682ffe84159afe05e269bc8b302`.
+Private receipts/logs: `logs/azure-native-pi/`. **21 deployment tests pass**;
+18 dependency checks pass on each VM; read-only native policy/SOW import and
+workbook-helper startup pass on all three. The 334 runtime / 74 focused test
+evidence is reused because runtime source was not changed by this deployment.
+Services remain disabled/inactive, with no credentials, activation gates, jobs,
+containers, paid prompts or browser launches. Network rules remain admin-SSH-only.
+
+The one-time `refresh-stage.py` validates the approved archive, refuses runtime
+artifacts, links, source drift, source removal and dependency changes, verifies
+unused/disabled/unconfigured state before writing, backs up replaced source, and
+retains exclusive per-snapshot intent/receipts under
+`/var/lib/cvent-ego-source-refresh/<archive-sha>/`. It does not run old installers,
+activate services, clear failures or retry. Never replay the private dispatcher
+`logs/azure-native-pi/refresh-approved-three.py` or remove local/remote intents.
+After any failure, inspect retained state; do not automatically roll back/replay.
+
+Remaining: assign restricted operator access; enforce disjoint event assignments
+or coordinated leases (including local builds); coordinate shared quotas; securely
+configure the chosen team model and Cvent credentials; then explicitly activate
+and test three concurrent sessions and independent Stop/viewer/cleanup. The user
+will supply the team model credential at the end; do not copy personal OAuth or
+ask for it prematurely. See blocking decisions below.
+
+**Status: three Azure VMs provisioned, current source/dependencies verified;
 app services disabled. NOT activated or team-ready.** User selected a team-funded
 model API credential and will provide it at the end; do not ask for or copy a
 personal OAuth login. No existing Azure service or local runner was restarted.
@@ -81,6 +141,11 @@ python3 deploy/azure/bundle.py \
 
 python3 -m unittest discover -s deploy/azure -p 'test_*.py' -v
 ```
+
+`refresh-stage.py` is only for a previously staged, unused, disabled installation
+with unchanged dependencies. It must be accompanied by `bundle.py` and
+`verify-stage.py`, with reviewed file hashes; it is not an active-service updater.
+The initial bootstrap/stage scripts below must never be replayed for refreshes.
 
 The source snapshot preserves current intentional edits and the exact upstream
 Ego revision plus reviewed patch. It includes only explicit source paths and the

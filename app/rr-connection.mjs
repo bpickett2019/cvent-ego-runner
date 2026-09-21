@@ -35,8 +35,14 @@ export function reportedCompletion(workspace, eventId) {
       if (!groups.length || groups.some(value => !Array.isArray(value) || value.length)) return "INCOMPLETE";
     }
     if (report?.uncertainWrites !== undefined && (!Array.isArray(report.uncertainWrites) || report.uncertainWrites.length)) return "INCOMPLETE";
+    // Pi decides applicability; no website/registration category checklist for new runs.
+    // Retain interpretation of historical reports without rewriting their evidence.
+    if (report?.completion?.requirements !== undefined && ["website", "registration", "dependencies"].some(key => report.completion[key] !== undefined && report.completion[key] !== true)) return "INCOMPLETE";
+    const verified = report?.completion?.requirements !== undefined
+      ? report.completion.requirements === true
+      : ["website", "registration", "dependencies"].every(key => report?.completion?.[key] === true);
     return typeof eventId === "string" && eventId.length > 0 && report?.eventId === eventId && report.status === "DONE"
-      && ["website", "registration", "dependencies", "draft"].every(key => report.completion?.[key] === true)
+      && verified && report.completion?.draft === true
       && ["blockers", "untested"].every(key => Array.isArray(report[key]) && report[key].length === 0)
       ? "DONE" : "INCOMPLETE";
   } catch { return "INCOMPLETE"; }
@@ -154,7 +160,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
       job.record.status = job.finishedNormally && !failures.length && !job.record.spendingUnreconciled && !job.record.apiUnresolved && !job.tools.size
         ? reportedCompletion(job.workspace, job.record.target?.apiEventId) : "STOPPED";
       job.record.executionSummary = job.record.status === "DONE"
-        ? "Done: the agent verified all RR-required website, registration and dependencies saved and connected, with the event still Draft."
+        ? "Done: the agent verified all applicable RR requirements saved and connected, with the event still Draft."
         : job.record.status === "INCOMPLETE"
           ? "Incomplete: full RR configuration and Draft verification were not confirmed. Execution results retain completed work and remaining blockers."
           : "Execution stopped. Submitted changes are not rolled back. A new upload starts from its own RR and live saved state; process cleanup and spending checks still apply.";
@@ -306,7 +312,8 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     originalUnchanged(record); eventName(record.requestedEventName);
     const prior = records().filter(r => r.id !== record.id);
     if (prior.some(r => r.spendingUnreconciled || !Number.isFinite(r.piCostUSD) || r.piCostUSD < 0)) throw new Error("Prior spending requires reconciliation");
-    Object.assign(record, { approvedSow: RUN_POLICY.approvedSow, allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD,
+    Object.assign(record, { approvedSow: RUN_POLICY.approvedSow, executionInstructions: RUN_POLICY.executionInstructions,
+      allowanceUSD: RUN_POLICY.allowanceUSD, externalCostReserveUSD: RUN_POLICY.externalCostReserveUSD,
       priorEventCostUSD: budgetTotals(jobsRoot, prior).spentUSD, executionPolicy: RUN_POLICY.executionPolicy,
       status: "RUNNING", phase: "BROWSER_STARTING", startedAt: new Date().toISOString() });
     record.totalEventCostUSD = record.priorEventCostUSD;
@@ -316,6 +323,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     try {
       ledger(job);
       writeFileSync(join(job.workspace, "approved-sow.md"), record.approvedSow, { mode: 0o400, flag: "wx" });
+      writeFileSync(join(job.workspace, "runner-prompt.md"), record.executionInstructions, { mode: 0o400, flag: "wx" });
       job.browserStarting = Promise.resolve().then(() => provisionBrowser(record, () => closing || !!job.stopping || active !== job));
       const runtime = await job.browserStarting;
       if (job.stopping || closing || active !== job) throw new Error("Browser startup cancelled; no AI started");

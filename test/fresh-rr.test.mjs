@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { RUN_POLICY, executionPrompt } from '../app/run-policy.mjs';
 
 test('execution envelope never injects old tasks, even with legacy reconciliation fields', () => {
-  const prompt = executionPrompt({ approvedSow: RUN_POLICY.approvedSow, workbook: '/new/original.xlsx', target: { apiEventId: 'current' }, executionPolicy: RUN_POLICY.executionPolicy, phase: 'RECONCILING', reconciliation: [{ jobId: 'OLD_TASK' }], priorEventJobs: [{ report: 'OLD_REPORT' }] }, '/new');
+  const prompt = executionPrompt({ executionInstructions: RUN_POLICY.executionInstructions, approvedSow: RUN_POLICY.approvedSow, workbook: '/new/original.xlsx', target: { apiEventId: 'current' }, executionPolicy: RUN_POLICY.executionPolicy, phase: 'RECONCILING', reconciliation: [{ jobId: 'OLD_TASK' }], priorEventJobs: [{ report: 'OLD_REPORT' }] }, '/new');
   assert.doesNotMatch(prompt, /OLD_TASK|OLD_REPORT|priorEventEvidence|prior-event-evidence|PRIOR SAVED-STATE RECOVERY|rr-reconcile/);
   assert.match(prompt, /current live saved Cvent state/);
   assert.match(prompt, /Never replay an uncertain save/);

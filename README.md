@@ -1,6 +1,6 @@
 # Cvent RR runner — pre-release
 
-Upload an RR, name an existing event, log in, and let one native Pi session build and verify the permitted configuration as Draft. Supported Cvent APIs first; pinned Ego + local Steel for documented gaps.
+Upload an RR, name an existing event, log in, and let one native Pi session build and verify the permitted configuration as Draft. Pi chooses its workflow and tools, using pinned Ego + local Steel for browser automation and supported Cvent APIs when useful.
 
 **No full RR acceptance has passed. Not approved for team/public production.** This is a trusted-local, single-operator installation, not an authenticated or multi-tenant service.
 
@@ -20,7 +20,7 @@ Each run starts from its uploaded workbook and current saved Cvent state—not a
 
 ## Scope and safety
 
-- Configure only applicable RR requirements and necessary dependencies within the event-build SOW: website/theme/header/footer/widgets, registration, admissions, pricing, paths, optional items, vouchers and advanced rules. No default category/widget work. Site Designer last; **Continue**, never Restore.
+- The standing scope is [app/standing-sow.md](app/standing-sow.md), distilled from the user's SOW with later delivery changes. Configure applicable RR requirements and necessary dependencies: event details, supplied branding/assets, website/theme/header/footer/widgets, registration, admissions, pricing, paths, optional items, vouchers and advanced rules. No default category/widget work or prescribed editor order.
 - Create or modify existing **event-only** objects/settings/relationships, including admissions and ordinary event prices. Keep the selected event's name/identity fixed and leave it unpublished as Draft.
 - Protect existing shared/account-wide definitions. Reuse exact matches; separate shared creation requires proven isolation and tool support. Event URLs/new templates alone do not prove scope. No isolated shared-create API is currently established.
 - Preserve RR names, codes and values exactly. No invented defaults/suffixes, duplicate workarounds, unverified writes or bypassing explicit API/tool denials. Missing capability is not broader permission.
@@ -40,7 +40,7 @@ DONE requires every applicable SOW requirement implemented, connected, verified 
 
 Pi writes the saved-result report; the wrapper checks its structure and safety state, not semantic RR completeness. See [RPC-CONNECTION.md](RPC-CONNECTION.md) for the exact result contract. No normal native exit alone proves DONE.
 
-The execution target is about 90 minutes, not a deadline or permission to skip requirements. The dashboard clock uses the existing `aiStartedAt` timestamp, excluding human login/setup, and freezes at settlement. Older records without an AI timestamp retain a labelled setup-inclusive duration; history is not rewritten. Supported event-only differences must lead to edits, not comparison-only reports or duplicate creations. Guides prioritize cached comparisons and independent API work before unrelated UI exploration; dependencies may require UI first.
+There is no model-facing time target or prescribed execution sequence. The dashboard clock uses the existing `aiStartedAt` timestamp, excluding human login/setup, and freezes at settlement. Older records without an AI timestamp retain a labelled setup-inclusive duration; history is not rewritten. Supported event-only differences must lead to edits, not comparison-only reports or duplicate creations. Workbook utilities and save helpers are optional. Pi chooses how to inspect, configure and verify; there is no API-first routing rule.
 
 Per-run and historical native costs remain tracked, sampled every two seconds and settled on Stop. **Automatic dollar thresholds are removed and the authorized app restart is verified; see CURRENT in MVP-HANDOFF.md.** Unknown/lost metering still stops. Legacy allowance/reserve fields are metadata; external charges and delayed provider usage are not a complete billing meter. No completed-RR price/latency guarantee exists.
 
@@ -70,7 +70,7 @@ Start with `PORT=8788 npm start` **only after verifying exclusive ownership and 
 
 ## Development and release
 
-Keep changes surgical: state assumptions, remove actual duplication, preserve behavior, run focused checks, and report evidence/limits. Do not add abstractions, fallback modes or workflow stages for hypothetical needs. Runtime instructions remain in `app/runner-prompt.md`; development docs are not injected into Pi.
+Keep changes surgical: state assumptions, remove actual duplication, preserve behavior, run focused checks, and report evidence/limits. Do not add abstractions, fallback modes or workflow stages for hypothetical needs. The short task in `app/native-task.md` and standing scope in `app/standing-sow.md` are captured separately for each new job. The sole prompt points Pi to that job's scope and workbook; development docs are not injected into Pi. `app/runner-prompt.md` is the frozen pre-simplification task, retained as historical source; the active native-Pi launcher does not load it.
 
 Read [MVP-HANDOFF.md](MVP-HANDOFF.md) **CURRENT** before continuing. Preserve existing uncommitted work, pinned vendor modifications, workbooks, profiles, costs and receipts. Paid runs, live mutations, browser launches, restarts, resets and commit/push each need separate authorization. Never execute the prohibited MOCK_ONLY workbook identified in the handoff.
 
