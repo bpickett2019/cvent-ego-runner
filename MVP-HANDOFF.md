@@ -1,6 +1,20 @@
 # MVP handoff
 
-## GitHub checkpoint and staging cutover blockers — CURRENT (2026-09-21)
+## Three-workspace staging published, AI disabled — CURRENT (2026-09-21)
+
+User authorized necessary cutover work. **Published** `https://staging.app-chartsdarts-dashboard.com/`, redirecting to `/workspaces/1/`; workspace links 1/2/3 reach three dedicated ARM64 VMs. Existing Caddy HTTPS/Basic account is unchanged. Restricted access expires **2026-09-22T16:18:42.211242+00:00** (approved 24 hours); gateway rejects requests and closes viewer sockets at expiry. Do not silently extend it. Shared Basic login is **not individual user authorization**; authenticated users can switch all three workspaces.
+
+All three `cvent-ego` services are now enabled/running, USER-owned, each with one fresh synthetic preview workbook/job/browser waiting for setup. **AI is explicitly disabled server-side**, no team/personal model or Cvent credentials copied, no paid session/cost, no automatic Cvent authoring. Return/answer/start-execution routes reject 503. Team Anthropic secret remains pending morning delivery; verify requested **Sonnet 5** exact ID/availability and event-collision/shared-quota controls before enabling paid execution. Preview workbooks are not real RRs.
+
+Gateway listens on loopback 8890; restricted SSH forwarding accounts/host-key-pinned tunnels reach loopback 8788 on each VM via 18781/18782/18783. Only NSG addition: gateway `57.154.50.217/32` to TCP22 on shared `ego-ssh-only`. No public app/viewer/Docker/CDP ports, DNS or IAM change. New machine forwarding key stays on gateway; only its public key was installed. Old `/pi` offline response preserved; retired legacy viewer route returns 410.
+
+Six old unleased `login_required` jobs were settled through canonical `ControlStore.finish`: five `failed_prewrite`, one `failed_recoverable`, with uncertainty retained where present. **2,053 historical job artifact files byte-preserved**, database/Caddy backups retained. Old `cvent-one-shot` service stopped/disabled, not deleted. Never resume/replay old work or remove intents. New source archive **`4e1a410dfa79bf497e741a5ddc055eb367276511a171dac6c62eceb19604ade0`** verified on all three VMs before activation.
+
+Evidence: private `logs/staging-cutover/`, especially `root-published-receipt.json`, `live-verification-final.log`, per-host activation/security receipts. **353 offline tests**, **21 deployment tests** at deployment, real local three-browser lifecycle PASS `logs/local-three-PyO8VW/receipt.json`. Live checks: assets/config/API routing, distinct identities, foreign-job read/Stop denial, AI 503, all three viewer WebSocket **101 handshakes**, unchanged $0 accounting, loopback-only backend listeners/no model credentials. Public TLS root/workspace/API/viewer requests return **401** without login. **Authenticated rendered cloud click-through/input remains pending human existing-login completion**; handshake checks do not prove frame rendering. Initial verification fixture wrongly expected detail fields in job summaries and unsolicited video frames; failures retained, no app re-dispatch/replay.
+
+Leave original local PID **4846** and interactive preview supervisor **31501** / ports **50825/50828/50831** untouched; they remain running. User intentionally stopped the previous RR; no diagnosis/retry authorized. Stop new work after this publication; next action is human staging login/click-around, then separately configure credentials/controls. No full RR/Draft, three concurrent paid builds or ~$60 complete-build acceptance claim. Never replay `logs/staging-cutover/publish-approved-once.py`, remote gateway/activation/cutover intents, old installers or refreshes.
+
+## GitHub checkpoint and staging cutover blockers — prior (2026-09-21)
 
 User chose **Anthropic Sonnet 5**, will provide the team Key Vault secret **in the morning**, and explicitly authorized **GitHub push plus publication replacing the existing staging root dashboard**. Verify the exact provider model ID/availability when credentials arrive; do not invent an ID, claim availability from a display name or copy personal OAuth. Paid builds are authorized as a future capability, not an automatic trial; no key exists on the new hosts yet. Existing three local previews stay available/AI-disabled.
 

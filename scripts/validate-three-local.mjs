@@ -104,7 +104,7 @@ with zipfile.ZipFile(sys.argv[1],'x',zipfile.ZIP_DEFLATED) as z:
     reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
     const port = reservation.address().port;
     await new Promise((r, reject) => reservation.close(error => error ? reject(error) : r()));
-    const env = { HOME: join(dir, 'home'), PATH: `${join(dir, 'bin')}:${process.env.PATH}`, PORT: String(port), DOCKER_HOST: dockerHost };
+    const env = { HOME: join(dir, 'home'), PATH: `${join(dir, 'bin')}:${process.env.PATH}`, PORT: String(port), DOCKER_HOST: dockerHost, CVENT_EXECUTION_ENABLED: 'false' };
     checkStop();
     item.child = spawn(process.execPath, ['app/server.mjs'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     item.exited = new Promise(resolveExit => item.child.once('exit', (code, signal) => resolveExit({ code, signal })));
@@ -121,6 +121,10 @@ with zipfile.ZipFile(sys.argv[1],'x',zipfile.ZIP_DEFLATED) as z:
     assert.ok(item.base, 'App startup deadline');
     const initial = await must(item.base, '/api/runtime');
     assert.equal(initial.executionPolicyId, 'native-pi'); assert.equal(initial.budget.spentUSD, 0);
+    assert.equal(initial.executionEnabled, false);
+    assert.equal((await request(item.base, '/api/return-agent', {})).status, 503);
+    const idleViewer = await fetch(item.base + '/viewer');
+    assert.equal(idleViewer.status, 200); assert.match(await idleViewer.text(), /Your private browser/);
     assert.deepEqual(await must(item.base, '/api/jobs'), []);
     const form = new FormData();
     form.append('rr', new Blob([await readFile(fixture)]), `user-${n}-lifecycle.xlsx`);
@@ -149,7 +153,8 @@ with zipfile.ZipFile(sys.argv[1],'x',zipfile.ZIP_DEFLATED) as z:
   }
   for (const item of instances) {
     const job = await must(item.base, `/api/jobs/${item.job.id}`);
-    assert.equal(job.waitingFor, 'setup'); assert.equal(job.piCostUSD, 0); assert.ok(!job.sessionId && !job.ownedPid);
+    assert.equal(job.waitingFor, 'setup'); assert.equal(job.piCostUSD, 0);
+    assert.equal((await request(item.base, `/api/jobs/${item.job.id}/answer`, { returnControl: true })).status, 503); assert.ok(!job.sessionId && !job.ownedPid);
     assert.equal(item.runtime.ownership, 'USER'); assert.equal(item.runtime.freshProfile, true);
     assert.equal((await must(item.base, '/api/jobs')).length, 1);
     assert.equal((await readdir(join(item.dir, 'data/ego-v2'))).length, 1);

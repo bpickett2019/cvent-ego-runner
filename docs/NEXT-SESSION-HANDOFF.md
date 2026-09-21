@@ -2,7 +2,19 @@
 
 Continue in `/Users/bailey/cvent-ego-runner`. Read `MVP-HANDOFF.md` CURRENT first, then this handoff completely. Historical sections describe earlier states; CURRENT supersedes them. Recheck local runtime/jobs and Git before acting. Preserve the extensive intentional dirty work on main; no reset, commit or push without permission.
 
-## Source push authorized; staging blocked on existing jobs/access — latest (2026-09-21)
+## Staging publication completed; AI remains disabled — latest (2026-09-21)
+
+**Live:** `https://staging.app-chartsdarts-dashboard.com/` → `/workspaces/1/`, with working 1/2/3 workspace routing to separate ARM64 VMs. User authorized settling existing jobs, renewing restricted access for 24 hours and completing cutover. Existing HTTPS/Basic login preserved; expiry **2026-09-22T16:18:42.211242+00:00**. This shared login is not per-user authorization. Do not bypass or silently renew expiry.
+
+Three app services are enabled/running with separate synthetic preview jobs/browser profiles, USER ownership and $0 model spend. `CVENT_EXECUTION_ENABLED=false` rejects execution/Return/answer endpoints; no credentials copied, native sessions or Cvent authoring. Team Anthropic Key Vault secret comes in the morning; exact **Sonnet 5** ID/availability, event-collision exclusion and shared quota controls still require verification before paid activation. No automatic trial.
+
+Old six unleased waiting jobs settled via canonical store lifecycle, preserving uncertainty and **2,053 artifact files**, database and Caddy backups: five `failed_prewrite`, one `failed_recoverable`. Old `cvent-one-shot` stopped/disabled, not deleted. New gateway on loopback 8890 uses pinned, local-forward-only SSH accounts to each VM's loopback 8788; forward ports 18781/18782/18783. Only new NSG rule permits gateway public `/32` TCP22; no public backend/viewer/CDP/Docker, DNS or IAM changes. `/pi` offline route preserved, retired old viewer is 410.
+
+Application archive **`4e1a410dfa79bf497e741a5ddc055eb367276511a171dac6c62eceb19604ade0`**. Evidence `logs/staging-cutover/`: `root-published-receipt.json`, `live-verification-final.log`, per-host refresh/activation/security receipts. **353 offline tests**, 21 deployment tests at activation; fresh real local three-browser/Stop/cleanup PASS `logs/local-three-PyO8VW/receipt.json`. Live private checks pass for assets/API/config, identity/storage routes, foreign-job read/Stop rejection, disabled AI endpoints and viewer WebSocket **101 upgrades**. No video-frame/rendered cloud acceptance claimed: existing human Basic login is still required. Anonymous public TLS checks return 401. Initial verification-script expectations were corrected; retained failures were not production retries.
+
+Never replay `logs/staging-cutover/publish-approved-once.py` or clear intents: `/var/lib/cvent-ego-gateway-prepare.started`, `/var/lib/cvent-ego-preview-activation.started` on each backend, `/var/lib/cvent-ego-source-refresh/<sha>/`, `/var/lib/cvent-ego-root-cutover/`. Gateway environment `/etc/cvent-ego-gateway.env`; backend activation `/etc/cvent-ego/{runner.env,activation-approved}`. Do not dump auth hashes, keys, environment or legacy DB. Original local PID4846 and interactive supervisor31501 remain untouched; leave local previews and desktop Ego space53 with user. Git push remains authorized; inspect remote/current commit and private publication receipt rather than assume older `0fa34e3` contains these changes. Next: human cloud login/click-around; pause before any new leaf, credentials or paid work. CURRENT MVP handoff supersedes every older instruction below.
+
+## Source push authorized; staging blocked on existing jobs/access — prior (2026-09-21)
 
 User selected **Anthropic Sonnet 5**; team Key Vault secret comes **in the morning**. They authorized GitHub push and publishing the three-workspace setup in place of the existing root staging dashboard. Verify exact model ID/availability after secure credentials arrive; no personal OAuth, key in chat, or automatic paid trial. No model credentials retrieved/transferred.
 

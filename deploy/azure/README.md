@@ -1,6 +1,57 @@
 # Azure three-instance deployment preparation
 
-## Requested public staging cutover (2026-09-21)
+## Published restricted staging preview — CURRENT (2026-09-21)
+
+**Live:** `https://staging.app-chartsdarts-dashboard.com/` redirects to workspace 1;
+`/workspaces/1/`, `/workspaces/2/`, `/workspaces/3/` route to separate ARM64 VMs.
+Existing Caddy HTTPS/Basic account retained. The approved 24-hour access window
+expires **2026-09-22T16:18:42.211242+00:00**; gateway fails closed and disconnects
+viewer sockets at expiry. Shared Basic login permits all workspaces and is **not
+per-user authorization**. Do not silently extend expiry or call this multi-tenant
+production security.
+
+Three app services enabled/running, USER ownership, one synthetic preview job
+and fresh browser each, **AI disabled**, $0 model spend. Return/answer/execution
+routes reject 503; no team/personal model credentials or Cvent credentials copied.
+User will supply team Key Vault information in the morning. Verify requested
+Anthropic Sonnet 5 exact model ID/availability, event exclusion and shared quotas
+before paid activation; never start a paid trial automatically.
+
+Topology: Caddy authenticates and overwrites `X-Cvent-Staging-User`; loopback
+`gateway.mjs` on 8890 verifies host/origin/identity/expiry, strips credentials and
+normalizes upstream requests without weakening the backend's loopback guard.
+Per-workspace path/config/viewer/WebSocket routing and session-storage namespacing.
+Pinned SSH forwards on gateway loopback 18781/18782/18783 reach each app's 8788;
+new `egoproxy` accounts allow only local forwarding to that destination, no shell,
+remote forwarding, agent forwarding or TTY. Gateway forwarding private key never
+exported. NSG addition permits only gateway `57.154.50.217/32` TCP22. Backend,
+viewer, CDP and Docker remain non-public; no DNS/IAM change.
+
+Six old waiting jobs settled through canonical `ControlStore.finish`, preserving
+uncertainty/artifacts: five `failed_prewrite`, one `failed_recoverable`; **2,053
+historical job files unchanged**, DB/Caddy backups retained. Legacy service
+stopped/disabled, not deleted; `/pi` offline route preserved, old viewer retired
+with 410. No existing operations replayed.
+
+Source archive `4e1a410dfa79bf497e741a5ddc055eb367276511a171dac6c62eceb19604ade0`;
+private receipts `logs/staging-cutover/`. 353 offline tests, 21 deployment tests
+at activation; local three-browser lifecycle PASS. Live asset/API/config checks,
+foreign job read/Stop denial, disabled AI, distinct identities/$0 accounting,
+loopback listeners, absent model credentials and all three WebSocket 101 upgrades
+passed. Anonymous HTTPS endpoints return 401. **Authenticated rendered cloud UI
+and interactive input still need the human's existing login**; a 101 handshake
+is not video-frame, Cvent-login or full RR acceptance.
+
+`prepare-gateway.py`, `activate-preview.py`, `publish-gateway.py` are one-time
+operators' tools, not replayable installers. Keep gateway preparation, per-host
+activation, source-refresh and root-cutover intents/receipts intact. On any
+failure inspect state; never clear markers, automatically retry or roll back.
+Gateway policy: `/etc/cvent-ego-gateway.env`. Backend gates:
+`/etc/cvent-ego/{runner.env,activation-approved}`. Read CURRENT handoffs before
+changes; earlier sections below are historical and no longer describe live state.
+Leave local original/interactive previews untouched.
+
+## Requested public staging cutover — prior (2026-09-21)
 
 User authorized replacing `https://staging.app-chartsdarts-dashboard.com/` with
 this three-workspace UI and pushing the source to private GitHub. Provider choice:

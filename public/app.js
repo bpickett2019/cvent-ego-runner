@@ -1,7 +1,11 @@
+import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';
+const basePath = workspaceBase(location.pathname);
+const appPath = path => workspacePath(basePath, path);
+const sessionStorage = scopedStorage(window.sessionStorage, basePath);
 const $ = id => document.getElementById(id);
 let jobId = sessionStorage.getItem("rrJobId");
 let job = null, submitting = false, handoffPending = false, stopping = false;
-let workspaceLabel = "USER 1", localWorkspaces = null;
+let workspaceLabel = "USER 1", localWorkspaces = null, executionEnabled = true;
 let browserOwnership = null, takingControl = false, viewerRuntimeId = null, viewerStopped = false, loginFirstAvailable = false;
 let workbook = null, draftLoading = false, edits = new Map(), previewEpoch = 0, jobs = [];
 const active = () => job && ["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(job.status);
@@ -15,7 +19,7 @@ function renderList(id, values) {
 }
 function message(text, error = false) { $("message").textContent = text; $("message").className = error ? "activity-error" : ""; }
 async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : { method: "POST", ...(body instanceof FormData ? { body } : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
+  const response = await fetch(appPath(path), body === undefined ? {} : { method: "POST", ...(body instanceof FormData ? { body } : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
@@ -54,6 +58,10 @@ function renderControls() {
   $("loginDone").disabled = submitting;
   $("start").hidden = job?.status !== "UPLOADED";
   $("start").disabled = locked || !!$("rr").files?.length || !!workbook;
+  if (!executionEnabled) {
+    $("take").disabled = true; $("take").textContent = 'AI NOT ENABLED';
+    $("loginDone").disabled = true; $("sendAnswer").disabled = true;
+  }
   editorControls();
 }
 function renderWorkbook() {
@@ -106,9 +114,11 @@ async function refresh() {
     if (requestedId !== jobId || epoch !== previewEpoch) return;
     job = current;
     loginFirstAvailable = runtime.loginFirst === true;
+    executionEnabled = runtime.executionEnabled !== false;
+    if (localWorkspaces?.staging) document.querySelector('.staging-banner').textContent = `${workspaceLabel} · RESTRICTED STAGING · ${executionEnabled ? 'AI ENABLED' : 'AI DISABLED · CREDENTIALS PENDING'}`;
     $("loginHint").textContent = loginFirstAvailable ? "Each Start Build creates a clean browser. Sign in, then Return to Agent. AI stays off until verification succeeds." : "Login-first upgrade is pending server activation. Existing runs are preserved; new builds are temporarily unavailable.";
     $("owner").textContent = runtime.ownership === "USER" ? "USER CONTROL" : runtime.ownership === "AGENT" ? "AGENT CONTROL" : "CONTROL HANDOFF / UNCONFIRMED";
-    if ((viewerRuntimeId && runtime.runtimeId && viewerRuntimeId !== runtime.runtimeId) || viewerStopped !== !!runtime.browserStopped) $("browserFrame").querySelector("iframe").src = "/viewer";
+    if ((viewerRuntimeId && runtime.runtimeId && viewerRuntimeId !== runtime.runtimeId) || viewerStopped !== !!runtime.browserStopped) $("browserFrame").querySelector("iframe").src = appPath("/viewer");
     viewerRuntimeId = runtime.runtimeId || viewerRuntimeId;
     viewerStopped = !!runtime.browserStopped;
     browserOwnership = runtime.ownership;
@@ -136,7 +146,7 @@ async function refresh() {
     $("cost").textContent = runtime.budget?.resetId && !active()
       ? `${money(runtime.budget.spentUSD)} tracked since reset · ${spendingMode}${job ? ` · ${money(job.piCostUSD)} selected run` : ""}`
       : job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending · ${spendingMode}` : `No current run · prior spending retained · ${spendingMode}`;
-    $("results").hidden = !job; if (job) $("results").href = `/api/jobs/${job.id}/results/final-report.md`;
+    $("results").hidden = !job; if (job) $("results").href = appPath(`/api/jobs/${job.id}/results/final-report.md`);
     const entries = Array.isArray(jobs) ? [...jobs] : [];
     if (job && !entries.some(item => item.id === job.id)) entries.unshift(job);
     $("jobSelect").replaceChildren(Object.assign(node("option", workbook?.originalName || "Select a saved run"), { value: "" }), ...entries.map(item => Object.assign(node("option", `${item.originalName} · ${statusLabel(item.status)}`), { value: item.id })));
@@ -222,7 +232,7 @@ $("upload").onclick = async () => {
     message("Binding your named target and preparing a clean browser; AI has not started…");
     const form = new FormData();
     if (workbook) {
-      const response = await fetch(`/api/workbooks/${workbook.id}/download`);
+      const response = await fetch(appPath(`/api/workbooks/${workbook.id}/download`));
       if (!response.ok) throw new Error("Could not read the saved workbook version");
       form.append("rr", await response.blob(), workbook.originalName); form.append("sourceWorkbookId", workbook.id);
     } else form.append("rr", file);
@@ -307,7 +317,7 @@ $("take").onclick = async () => {
 };
 $("openBrowser").onclick = () => $("browserDetails").scrollIntoView({ behavior: "smooth" });
 $("profile1").onclick = () => $("workspace").scrollIntoView({ behavior: "smooth" });
-$("reloadViewer").onclick = () => { const frame = $("browserFrame").querySelector("iframe"); frame.src = "/viewer"; };
+$("reloadViewer").onclick = () => { const frame = $("browserFrame").querySelector("iframe"); frame.src = appPath("/viewer"); };
 $("sheetSelect").onchange = () => loadSheet(Number($("sheetSelect").value), 0);
 $("previousRows").onclick = () => loadSheet(workbook.sheet, Math.max(0, workbook.offset - 80));
 $("nextRows").onclick = () => loadSheet(workbook.sheet, workbook.offset + 80);
@@ -324,16 +334,16 @@ $("saveWorkbook").onclick = async () => {
   finally { draftLoading = false; renderControls(); }
 };
 async function configureLocalWorkspaces() {
-  const response = await fetch('/local-workspaces.json', { cache: 'no-store' });
+  const response = await fetch(appPath('/local-workspaces.json'), { cache: 'no-store' });
   if (response.status === 404) return; // Normal single-user deployment remains unchanged.
   if (!response.ok) throw new Error('Local workspace configuration unavailable');
-  const { localWorkspaceConfig } = await import('/workspace-config.js');
-  localWorkspaces = localWorkspaceConfig(await response.json(), location.origin);
+  const { localWorkspaceConfig } = await import('./workspace-config.js');
+  localWorkspaces = localWorkspaceConfig(await response.json(), location.origin, location.pathname);
   workspaceLabel = localWorkspaces.label;
-  document.title = `Forge · ${workspaceLabel} · Local workspace`;
+  document.title = `Forge · ${workspaceLabel} · ${localWorkspaces.staging ? 'Staging' : 'Local'} workspace`;
   const switcher = document.querySelector('.workspace-switcher');
   switcher.dataset.localMulti = 'true';
-  switcher.querySelector('p').textContent = '3 separate local workspaces · click to switch';
+  switcher.querySelector('p').textContent = '3 separate workspaces · click to switch';
   const buttons = switcher.querySelectorAll('.profile');
   for (const [index, workspace] of localWorkspaces.workspaces.entries()) {
     const button = buttons[index], selected = workspace.id === localWorkspaces.current;
@@ -353,8 +363,8 @@ async function configureLocalWorkspaces() {
   for (const pill of document.querySelectorAll('.tiny-pill')) {
     if (pill.textContent === 'USER 1 · PROFILE 1') pill.textContent = `${workspaceLabel} · PRIVATE BROWSER`;
   }
-  document.querySelector('.local-user small').textContent = 'Local preview · separate apps, same OS user';
-  document.querySelector('.staging-banner').textContent = `${workspaceLabel} · LOCAL PREVIEW · AI DISABLED`;
+  document.querySelector('.local-user small').textContent = localWorkspaces.staging ? 'Shared staging login · separate VM workspaces' : 'Local preview · separate apps, same OS user';
+  document.querySelector('.staging-banner').textContent = `${workspaceLabel} · ${localWorkspaces.staging ? 'RESTRICTED STAGING' : 'LOCAL PREVIEW'} · AI DISABLED`;
 }
 async function initialize() {
   const epoch = previewEpoch;

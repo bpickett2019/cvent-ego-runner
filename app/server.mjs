@@ -39,6 +39,10 @@ app.use((req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
 });
+app.use((req, res, next) => {
+  if (process.env.CVENT_EXECUTION_ENABLED === 'false' && req.method === 'POST' && (/^\/api\/(?:target|return-agent)$/.test(req.path) || /^\/api\/jobs\/[^/]+\/(?:answer|rpc|start|continue)$/.test(req.path))) return res.status(503).json({ error: 'Paid AI is disabled pending secure credentials and activation checks. Browser preview and Stop remain available.' });
+  next();
+});
 app.use(express.json({ limit: "100kb" }));
 app.use(express.static(resolve(root, "public")));
 async function updateState(patch) {
@@ -130,7 +134,7 @@ async function browserStopped(runtime) {
 app.get("/api/runtime", async (_req, res) => {
   const runtime = await readJson(runtimePath);
   const { runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent } = runtime;
-  res.json({ loginFirst: true, budget: connection.budget(), browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
+  res.json({ loginFirst: true, executionEnabled: process.env.CVENT_EXECUTION_ENABLED !== 'false', budget: connection.budget(), browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
 });
 async function selectTarget(name) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
@@ -236,9 +240,10 @@ app.post("/api/return-agent", async (req, res) => {
 app.get("/viewer", async (_req, res) => {
   const runtime = await readJson(runtimePath);
   if (await browserStopped(runtime)) return res.type("html").send('<!doctype html><html><body style="background:#111827;color:#e5e7eb;font:16px system-ui;padding:32px"><h2>Browser stopped</h2><p>This run ended. Its browser has been shut down to free memory. Saved evidence and profiles are preserved.</p><p>Start a fresh RR build when you are ready.</p></body></html>');
-  const origin = steelOrigin(runtime.steelApiOrigin || "http://127.0.0.1:3400");
+  if (!runtime.steelApiOrigin) return res.type('html').send('<!doctype html><html><body style="background:#111827;color:#e5e7eb;font:16px system-ui;padding:32px"><h2>Your private browser</h2><p>Upload an RR and Start Build to open a fresh browser. AI remains off until configuration and verified handoff.</p></body></html>');
+  const origin = steelOrigin(runtime.steelApiOrigin);
   let html = await fetch(`${origin}/v1/sessions/debug?showControls=true&interactive=true`, { signal: AbortSignal.timeout(10000) }).then(r => r.text());
-  html = html.replace("const baseWsUrl = 'ws://0.0.0.0:3000/v1/sessions/cast';", "const baseWsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/steel-cast';");
+  html = html.replace("const baseWsUrl = 'ws://0.0.0.0:3000/v1/sessions/cast';", "const baseWsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + location.pathname.replace(/\\/viewer$/, '/steel-cast');");
   res.type("html").send(html);
 });
 app.use((error, _req, res, _next) => res.status(409).json({ error: error.message }));
@@ -248,7 +253,7 @@ server.on("error", error => { console.error(error.message); process.exit(1); });
 server.on("upgrade", (req, socket, head) => {
   if (!isLocalRequest(req) || !req.url.startsWith("/steel-cast")) return socket.destroy();
   void readJson(runtimePath).then(async runtime => {
-    if (await browserStopped(runtime)) return socket.destroy();
+    if (await browserStopped(runtime) || !runtime.steelApiOrigin) return socket.destroy();
     req.url = req.url.replace(/^\/steel-cast/, "/v1/sessions/cast");
     viewerProxy.ws(req, socket, head, { target: steelOrigin(runtime.steelApiOrigin || "http://127.0.0.1:3400") });
   }).catch(() => socket.destroy());

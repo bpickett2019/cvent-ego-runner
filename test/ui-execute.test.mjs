@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace-routing.js';
+// Inject the real pure routing exports into this DOM fixture; browser module
+// loading is separately exercised by the live UI check.
+const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace("import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';\n", '');
 const runtime = { ownership: 'AGENT', loginFirst: true };
 const turn = () => new Promise(r => setImmediate(r));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
@@ -20,6 +23,9 @@ function fixture(fetcher, { confirmResult = true, storage = new Map([['rrJobId',
   };
   let created = 0;
   const context = vm.createContext({ document: { getElementById: get, createElement: () => get(`created-${created++}`) }, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: () => confirmResult, setInterval() {}, FormData: class { append() {} }, fetch: async (path, options) => { const data = await (path === '/api/jobs' && !options?.method ? [] : fetcher(path, options)); return { ok: true, json: async () => data }; } });
+  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
+  const fetcherWithFixture = context.fetch;
+  context.fetch = (path, options) => path === '/local-workspaces.json' ? Promise.resolve({ status: 404 }) : fetcherWithFixture(path, options);
   vm.runInContext(source, context);
   return { get, context, storage };
 }
