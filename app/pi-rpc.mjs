@@ -13,7 +13,11 @@ export class PiRpc extends EventEmitter {
     // skill with a different API. Keep native tools and extensions unchanged.
     // Exclude development policies; the single job prompt carries the approved SOW.
     // Keep Pi's built-in system prompt, tools and compaction unmodified.
-    const args = ["--mode", "rpc", "--approve", "--session-dir", `${workspace}/pi-sessions`, "--thinking", "low",
+    const thinking = env.PI_THINKING_LEVEL ?? "high";
+    if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinking)) {
+      throw new Error("Invalid PI_THINKING_LEVEL; native execution was not started");
+    }
+    const args = ["--mode", "rpc", "--approve", "--session-dir", `${workspace}/pi-sessions`, "--thinking", thinking,
       "--no-context-files",
       "--no-skills", "--skill", join(cwd, ".pi/skills/ego-browser/SKILL.md")];
     if (!env.PI_PROVIDER || !env.PI_MODEL) throw new Error("Launch from the working Pi environment (PI_PROVIDER and PI_MODEL required)");

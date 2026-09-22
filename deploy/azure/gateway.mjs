@@ -34,7 +34,12 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
     res.setHeader('Cache-Control', 'no-store');
     if (!authorized(req)) { res.writeHead(403); return res.end('Authenticated staging access required'); }
     if (now() >= expiry) { res.writeHead(503); return res.end('Restricted staging access expired; operator renewal required'); }
-    if (req.url === '/') { res.writeHead(302, { Location: '/workspaces/1/' }); return res.end(); }
+    // The UI resolves module imports, API calls and storage from this prefix.
+    // Never serve a second root alias with an independently maintained asset list.
+    const entry = /^\/(?:index\.html)?(\?.*)?$/.exec(req.url);
+    if (entry && ['GET', 'HEAD'].includes(req.method)) {
+      res.writeHead(302, { Location: '/workspaces/1/' + (entry[1] || '') }); return res.end();
+    }
     if (/^\/workspaces\/[123]$/.test(req.url)) { res.writeHead(308, { Location: req.url + '/' }); return res.end(); }
     const route = routeWorkspace(req.url);
     if (!route) { res.writeHead(404); return res.end('Unknown workspace route'); }

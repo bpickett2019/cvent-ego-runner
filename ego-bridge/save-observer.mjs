@@ -7,7 +7,14 @@ import { createHash } from 'node:crypto';
 // Executes in the page. Only visible DOM signals; no click, navigation or fetch.
 export function readSaveSignals({ pendingSelector, completionSelector, rejectionSelector, validationSelector } = {}) {
   const visible = element => !!element && element.getClientRects().length > 0 && element.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) !== false && getComputedStyle(element).visibility !== 'hidden' && getComputedStyle(element).display !== 'none' && getComputedStyle(element).opacity !== '0';
-  const matches = selector => selector ? [...document.querySelectorAll(selector)].filter(visible) : [];
+  const matches = selector => {
+    if (!selector) return [];
+    try { return [...document.querySelectorAll(selector)].filter(visible); }
+    catch (error) {
+      if (error.name === 'SyntaxError') throw Error('Save selector is not a valid selector for querySelectorAll; use standard CSS, not Ego locators');
+      throw error;
+    }
+  };
   if (!document.body || document.readyState === 'loading') throw Error('SaveDocumentNotReady');
   const pendingNodes = matches(pendingSelector);
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -133,11 +140,21 @@ export function saveObserverForHost(host, { submit = false } = {}) {
       if (submit) throw error; // Preflight failed before any Save input.
       return uncertain(onUncertain, { schemaVersion: 2, phase: 'CONTROL_BASELINE', failure: saveFailureDiagnostic(error, 'CONTROL_BASELINE'), polls: 0, attempts: 0, lastObservation: null }, error);
     }
-    const checkControl = async () => {
+    const controlledRuntime = async () => {
       const current = await host.runtime();
       if (existsSync(marker) || existsSync(join(workspace, 'api-write-uncertain.json'))) throw Error('Existing uncertainty; do not reopen a stopped save');
       if (current.ownership !== 'AGENT' || ['runtimeId', 'activeTargetId', 'steelSessionId', 'expectedEvtstub', 'expectedEventName'].some(key => current[key] !== initial[key]) || !isDeepStrictEqual(current.apiEvent, initial.apiEvent)) throw Error('Save observation lost ownership or identity');
       if (existsSync(join(workspace, 'job.json')) && JSON.parse(await readFile(join(workspace, 'job.json'), 'utf8')).status !== 'RUNNING') throw Error('Job stopped');
+      return current;
+    };
+    const checkControl = async () => {
+      let current = await controlledRuntime();
+      // Ego task.page(label) is lazy: targetId is unset until a Page operation.
+      // Resolve through the documented read-only API, never by assigning an ID.
+      if (page.targetId === undefined) {
+        await page.info();
+        current = await controlledRuntime(); // Stop/ownership/identity may change during the read.
+      }
       const target = await host.activeTarget();
       const url = new URL(target.url), ids = [...url.pathname.matchAll(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/ig)].map(match => match[0]);
       for (const [key, value] of url.searchParams) if (key.toLowerCase() === 'evtstub') ids.push(value);

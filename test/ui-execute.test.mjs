@@ -3,9 +3,12 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace-routing.js';
-// Inject the real pure routing exports into this DOM fixture; browser module
-// loading is separately exercised by the live UI check.
-const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace("import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';\n", '');
+import { requirementProgress } from '../public/requirement-progress.js';
+// Inject the real pure exports into this DOM fixture; browser module loading
+// is separately exercised by the live UI check.
+const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
+  .replace("import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';\n", '')
+  .replace("import { requirementProgress } from './requirement-progress.js';\n", '');
 const runtime = { ownership: 'AGENT', loginFirst: true };
 const turn = () => new Promise(r => setImmediate(r));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
@@ -23,13 +26,101 @@ function fixture(fetcher, { confirmResult = true, storage = new Map([['rrJobId',
   };
   let created = 0;
   const context = vm.createContext({ document: { getElementById: get, createElement: () => get(`created-${created++}`) }, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: () => confirmResult, setInterval() {}, FormData: class { append() {} }, fetch: async (path, options) => { const data = await (path === '/api/jobs' && !options?.method ? [] : fetcher(path, options)); return { ok: true, json: async () => data }; } });
-  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
+  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, requirementProgress, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
   const fetcherWithFixture = context.fetch;
   context.fetch = (path, options) => path === '/local-workspaces.json' ? Promise.resolve({ status: 404 }) : fetcherWithFixture(path, options);
   vm.runInContext(source, context);
   return { get, context, storage };
 }
 const response = (path, record) => path === '/api/runtime' ? runtime : path.endsWith('/results/state.json') ? {} : record;
+
+test('requirement statuses drive live bullets and polling counts without sending agent actions', async () => {
+  const posts = [], record = { id: 'job', status: 'RUNNING', phase: 'EXECUTING' };
+  let progress = { completed: ['stale checkpoint'], requirements: [
+    { id: 'price', label: 'Admission price', status: 'verified_changed', verification: 'Read back $25' },
+    { id: 'venue', status: 'verified_existing', evidence: 'Matches RR' },
+    { id: 'theme', status: 'blocked', reason: 'Mapping missing' },
+    { id: 'questions', status: 'unverified' },
+    { id: 'CRM', status: 'excluded', reason: 'Out of scope' },
+  ] };
+  const f = fixture((path, options) => {
+    if (options?.method) posts.push(path);
+    return path.endsWith('/results/state.json') ? progress : response(path, record);
+  });
+  await turn();
+  assert.equal(f.get('completed').children.length, 2);
+  assert.match(f.get('completed').children[0].textContent, /Changed · price — Admission price — Read back \$25/);
+  assert.equal(f.get('pending').children.length, 2);
+  assert.match(f.get('pending').children[0].textContent, /Blocked.*Mapping missing/);
+  assert.equal(f.get('excluded').children.length, 1); assert.equal(f.get('excludedProgress').hidden, false);
+  assert.equal(f.get('progressLists').hidden, false);
+  assert.match(f.get('completionCount').textContent, /1 changed · 1 existing matches · 2 remaining · 1 excluded · not independent acceptance/);
+  assert.equal(f.get('status').textContent, 'Running', 'progress does not promote job completion');
+  progress = { requirements: [{ id: 'price', status: 'unverified' }] };
+  await vm.runInContext('refresh()', f.context);
+  assert.equal(f.get('completed').children[0].textContent, 'None');
+  assert.match(f.get('pending').children[0].textContent, /Unverified · price/);
+  assert.match(f.get('completionCount').textContent, /0 changed · 0 existing matches · 1 remaining/);
+  assert.equal(f.get('excludedProgress').hidden, true); assert.deepEqual(posts, []);
+});
+
+test('initialized RR progress exposes reported stage and read/edit/verify activity without claiming a save', async () => {
+  const posts = [], record = { id: 'job', status: 'RUNNING', phase: 'EXECUTING', executionActivity: { at: 'now', message: 'bash finished' } };
+  let progress = { requirements: [{ id: 'ATT-path', status: 'unverified' }], currentStage: 'Stage 2 — Paths', currentAction: 'READ ATT-path: inspect current assignment' };
+  const f = fixture((path, options) => {
+    if (options?.method) posts.push(path);
+    return path.endsWith('/results/state.json') ? progress : response(path, record);
+  });
+  await turn();
+  assert.equal(f.get('stage').textContent, 'Stage 2 — Paths');
+  assert.equal(f.get('action').textContent, 'Agent-reported: READ ATT-path: inspect current assignment');
+  for (const action of ['EDIT', 'SAVE_PENDING', 'VERIFY']) {
+    progress = { ...progress, currentAction: `${action} ATT-path: correct and verify` };
+    await vm.runInContext('refresh()', f.context);
+    assert.match(f.get('action').textContent, new RegExp(`Agent-reported: ${action}`));
+    assert.match(f.get('completionCount').textContent, /0 changed · 0 existing matches · 1 remaining/);
+    assert.equal(f.get('status').textContent, 'Running');
+  }
+  assert.deepEqual(posts, []);
+});
+
+test('missing or malformed requirement activity falls back to native metadata safely', async () => {
+  const record = { id: 'job', status: 'RUNNING', phase: 'EXECUTING', executionActivity: { at: 'now', message: 'bash started' } };
+  const f = fixture(path => path.endsWith('/results/state.json')
+    ? { requirements: [], currentStage: {}, currentAction: 9 }
+    : response(path, record));
+  await turn();
+  assert.equal(f.get('stage').textContent, 'Executing RR');
+  assert.equal(f.get('action').textContent, 'now · bash started');
+});
+
+test('dashboard describes in-place RR corrections rather than duplicate objects for differences', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /correct existing differences in place, and create confirmed missing requirements/);
+  assert.match(html, /Follow the RR's path assignments and verify saved connections/);
+  assert.doesNotMatch(html, /create separate RR-compliant objects for differences/);
+});
+
+test('exclusions alone stay visible and never count as completion', async () => {
+  const f = fixture(path => path.endsWith('/results/state.json')
+    ? { requirements: [{ id: 'CRM', status: 'excluded', reason: 'Out of scope' }] }
+    : response(path, { id: 'job', status: 'STOPPED' }));
+  await turn();
+  assert.equal(f.get('progressLists').hidden, false); assert.equal(f.get('excludedProgress').hidden, false);
+  assert.equal(f.get('completionTitle').textContent, 'No completed work reported');
+  assert.match(f.get('completionCount').textContent, /0 remaining · 1 excluded/);
+});
+
+test('requirement content renders as literal text, not workbook-supplied markup', async () => {
+  const markup = '<img src=x onerror=alert(1)>';
+  const f = fixture(path => path.endsWith('/results/state.json')
+    ? { requirements: [{ id: 'question', label: markup, status: 'blocked', reason: '<script>bad()</script>' }] }
+    : response(path, { id: 'job', status: 'STOPPED' }));
+  await turn();
+  const item = f.get('pending').children[0];
+  assert.match(item.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(item.innerHTML, undefined);
+});
 
 test('an old startup rejection is displayed as retired, never as a current operator prerequisite', async () => {
   const reason = 'Operator decision required before a new RR: inspect data/jobs/prior/unresolved-changes.json. Authorize separate read-only saved-state verification; repair or acceptance needs explicit approval. No AI started.';

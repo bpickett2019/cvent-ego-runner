@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
@@ -18,6 +19,12 @@ test('pending save is observed until explicit completion; never claimed persiste
   const result = await f.run();
   assert.equal(result.status, 'COMPLETION_VISIBLE_NOT_VERIFIED'); assert.equal(result.verified, false);
   assert.equal(result.polls, 3); assert.equal(result.elapsedMs, 2000); assert.deepEqual(f.markers, []);
+});
+test('initial absence of Saving is not completion; a delayed pending indicator is observed', async () => {
+  const f = fixture([idle, { ...idle, pending: true }, { ...idle, completionVisible: true }]);
+  const result = await f.run();
+  assert.equal(result.polls, 3); assert.equal(result.elapsedMs, 2000);
+  assert.equal(result.verified, false); assert.deepEqual(f.markers, []);
 });
 test('explicit rejection surfaces validation without authorizing a retry or claiming persistence', async () => {
   const f = fixture([{ ...idle, rejectionVisible: true, validation: ['Changes were not saved: invalid URL'] }]);
@@ -164,4 +171,95 @@ test('bound observer persists uncertainty, blocks later writes, and never overwr
   await f.host.assertOperationAllowed({ method: 'Runtime.evaluate', params: { expression: 'document.title' } });
   await assert.rejects(saveObserverForHost(f.host)(page, { completionSelector: '#saved' }), /Existing uncertainty/);
   assert.equal(await readFile(markerPath, 'utf8'), marker);
+});
+
+test('bound observer resolves a lazy Page with read-only info before comparing target identity', async t => {
+  const f = await hostFixture(t); let infoCalls = 0, reads = 0;
+  const page = { targetId: undefined,
+    info: async () => { infoCalls++; page.targetId = 'tab'; },
+    evaluate: async () => { reads++; return { ...idle, completionVisible: true }; } };
+  const result = await saveObserverForHost(f.host)(page, { completionSelector: '#saved' });
+  assert.equal(infoCalls, 1); assert.equal(reads, 1); assert.equal(result.verified, false);
+  await assert.rejects(readFile(join(f.dir, 'browser-save-uncertain.json')), { code: 'ENOENT' });
+});
+
+test('already resolved Page needs no additional info operation', async t => {
+  const f = await hostFixture(t);
+  const page = { targetId: 'tab', info: async () => assert.fail('unnecessary info'),
+    evaluate: async () => ({ ...idle, completionVisible: true }) };
+  assert.equal((await saveObserverForHost(f.host)(page, { completionSelector: '#saved' })).verified, false);
+});
+
+for (const scenario of ['wrong page', 'unresolved page', 'ownership changed', 'event changed', 'target changed', 'job stopped', 'disconnected', 'uncertainty appeared']) {
+  test(`lazy Page resolution still fails closed: ${scenario}`, async t => {
+    const f = await hostFixture(t); let infoCalls = 0, reads = 0;
+    const markerPath = join(f.dir, 'browser-save-uncertain.json');
+    const page = { targetId: undefined, info: async () => {
+      infoCalls++; page.targetId = 'tab';
+      if (scenario === 'wrong page') page.targetId = 'other-tab';
+      if (scenario === 'unresolved page') page.targetId = undefined;
+      if (scenario === 'disconnected') throw Error('disconnected');
+      if (scenario === 'ownership changed') await writeFile(f.runtimePath, JSON.stringify({ ...f.runtime, ownership: 'USER' }));
+      if (scenario === 'event changed') await writeFile(f.runtimePath, JSON.stringify({ ...f.runtime, expectedEvtstub: '22222222-2222-2222-2222-222222222222' }));
+      if (scenario === 'target changed') await writeFile(f.runtimePath, JSON.stringify({ ...f.runtime, activeTargetId: 'other-tab' }));
+      if (scenario === 'job stopped') await writeFile(join(f.dir, 'job.json'), JSON.stringify({ status: 'STOPPED' }));
+      if (scenario === 'uncertainty appeared') await writeFile(markerPath, '{"immutable":true}\n');
+    }, evaluate: async () => { reads++; return { ...idle, completionVisible: true }; } };
+    await assert.rejects(saveObserverForHost(f.host)(page, { completionSelector: '#saved' }), { name: 'BrowserSaveUncertainError' });
+    assert.equal(infoCalls, 1); assert.equal(reads, 0);
+    const marker = JSON.parse(await readFile(markerPath, 'utf8'));
+    if (scenario === 'uncertainty appeared') assert.deepEqual(marker, { immutable: true });
+    else {
+      assert.equal(marker.failure.phase, 'CONTROL_BEFORE_READ');
+      assert.equal(marker.failure.category, scenario === 'disconnected' ? 'DISCONNECTED_OR_CRASHED' : 'CONTROL_OR_IDENTITY_LOST');
+    }
+  });
+}
+
+test('no lazy resolution after ownership has already returned to the user', async t => {
+  const f = await hostFixture(t);
+  await writeFile(f.runtimePath, JSON.stringify({ ...f.runtime, ownership: 'USER' }));
+  const page = { info: async () => assert.fail('must not inspect user-owned page') };
+  await assert.rejects(saveObserverForHost(f.host)(page, { completionSelector: '#saved' }), { name: 'BrowserSaveUncertainError' });
+});
+
+test('lazy resolution failure in saveOnce preflight never clicks or creates post-Save uncertainty', async t => {
+  const f = await hostFixture(t); let infoCalls = 0;
+  const page = { targetId: undefined, info: async () => { infoCalls++; throw Error('disconnected'); },
+    click: async () => assert.fail('must not click'), evaluate: async () => assert.fail('must not inspect save signals') };
+  await assert.rejects(saveObserverForHost(f.host, { submit: true })(page, '#Save', { completionSelector: '#saved' }), /disconnected/);
+  assert.equal(infoCalls, 1);
+  await assert.rejects(readFile(join(f.dir, 'browser-save-uncertain.json')), { code: 'ENOENT' });
+});
+
+test('pinned Ego SDK lazy Page contract integrates with the host-bound save observer (mock transport)', async t => {
+  const sdk = new URL('../vendor/ego-lite/package/ego-browser/dist/src/page-model.js', import.meta.url);
+  if (!existsSync(sdk)) return t.skip('Requires the pinned Ego build; mock Page tests still run without vendor assets');
+  const { createTaskSpaceHandle } = await import(sdk.href);
+  const f = await hostFixture(t); let infoReads = 0;
+  const task = createTaskSpaceHandle({ id: 1246080070, name: 'save-contract', ownership: 'agent' }, {
+    ledger: { getPage: async (spaceId, label) => {
+      assert.equal(spaceId, 1246080070); assert.equal(label, 'p1');
+      return { targetId: 'tab', openedBy: 'agent' };
+    } },
+    gate: { withPage: async (page, action) => { assert.equal(page.targetId, 'tab'); return action({ sessionId: 'fixture' }); } },
+    pendingDialog: () => undefined,
+    cdp: async (method, params) => {
+      assert.equal(method, 'Runtime.evaluate'); assert.match(params.expression, /url:location.href/); infoReads++;
+      return { result: { value: { url: `https://app.cvent.com/event/${f.runtime.expectedEvtstub}/designer` } } };
+    },
+  });
+  const page = task.page('p1');
+  assert.equal(page.targetId, undefined); // Actual pinned SDK, not an eager mock.
+  page.evaluate = async () => ({ ...idle, completionVisible: true });
+  const result = await saveObserverForHost(f.host)(page, { completionSelector: '#saved' });
+  assert.equal(page.targetId, 'tab'); assert.equal(infoReads, 1); assert.equal(result.verified, false);
+});
+
+test('Save helper identifies unsupported Ego selector syntax without exposing the selector', () => {
+  const selector = '[data-private="SECRET"]:text-is("Save")';
+  assert.throws(() => runInNewContext(`(${readSaveSignals.toString()})({completionSelector: ${JSON.stringify(selector)}})`, {
+    document: { body: {}, createTreeWalker: () => ({ nextNode: () => null }), querySelectorAll: () => { throw new SyntaxError('not a valid selector: ' + selector); } },
+    NodeFilter: { SHOW_TEXT: 4 },
+  }), error => /standard CSS, not Ego locators/.test(error.message) && !error.message.includes('SECRET'));
 });

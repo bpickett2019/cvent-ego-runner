@@ -10,6 +10,10 @@ or select another browser or profile to resolve a missing host capability.
 - Resume `await taskSpace(1246080070)` (name `cvent-ego-runner` on first use).
   There is one assigned tab. Inspect `task.tabs()`; if its active tab is unmanaged,
   adopt `active.page` and reuse the returned label. Never create another space/tab.
+  `task.page(label)` returns a lazy handle: `page.targetId` can initially be undefined.
+  The project Save helpers resolve it with documented read-only `page.info()` before
+  checking target identity, rechecking ownership/Stop afterward. Do not assign an ID
+  or substitute a page to satisfy a guard. See `references/api.md` for the Page contract.
 - Page labels and snapshot refs persist in a session-specific directory under
   `data/ego-v2/`. The single upstream patch makes `runtimeInstanceId()` accept
   `EGO_BROWSER_INSTANCE_ID`, supplied by the bridge from the Steel session ID.
@@ -51,8 +55,22 @@ or select another browser or profile to resolve a missing host capability.
   their final expected state and print the next focused snapshot in one invocation.
   Inspect unfamiliar dialogs/transitions before continuing; save/readback checks
   are not optional. Do not batch across uncertainty or replay mutations.
+  Do not print a full snapshot, whole-document text and a screenshot of the same
+  unchanged state. Choose the cheapest observation that answers the current question.
+  Keep routine output focused on the active editor, changed values, validation and
+  blockers. Retain long inventories/exports in the job workspace and read relevant
+  portions when needed; do not repeatedly print the workbook or state.json ledger.
+  Batch grounded field edits or known visibility selections within one editor, then
+  Save once and verify. Inspect an unfamiliar control before batching it. A failed
+  command is not permission to replay the batch. Preserve all needed source values,
+  save signals and evidence; these are efficiency instructions, not output truncation.
 - Await saves; inspect validation. Treat a responsive UI's `Saving...` as pending,
-  not proof of success or failure. Use bounded read-only observation with documented
+  not proof of success or failure. Absence of `Saving...` immediately after clicking
+  is not completion: the indicator may appear later. A Save button already present
+  before the click is not a new completion signal either. Establish a positive,
+  observed post-save outcome before navigating/reloading for independent readback.
+  `SavePendingError` means keep observing the same page, not retry reload or Save.
+  Use bounded read-only observation with documented
   waits for observable completion or explicit validation before classifying a normal
   pending save as uncertain. Do not close, navigate, refresh or repeat Save while
   pending. Inspect visible validation messages, not just an icon/count; a validation
@@ -66,6 +84,11 @@ or select another browser or profile to resolve a missing host capability.
   actions and documented waits remain available; no helper is mandatory. Preserve exact intended
   values, relationships and relevant defaults in workspace evidence first. Ground
   the Save locator and actual CSS selectors from the current UI **before** saving.
+  Unlike Ego Page locators, helper option selectors go directly to DOM
+  `querySelectorAll`: use standard CSS only, not `@refs`, `loc=`, `css=`, XPath,
+  `:text-is()` or `:has-text()`. The `saveRef` passed to `saveOnce` still accepts Ego
+  locators because it is used by `page.click`. If no distinct CSS outcome signal is
+  grounded, use documented Page observations instead of inventing a helper selector.
   Supply `completionSelector` and, when observed, `pendingSelector`,
   `validationSelector`, `rejectionSelector`; `timeoutMs` defaults to 60000
   (1000–120000 permitted). Example with observed selectors:

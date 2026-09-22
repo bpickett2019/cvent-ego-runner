@@ -41,11 +41,15 @@ test("workbook UI has no scope or budget overrides", async () => {
   assert.match(RUN_POLICY.instruction, /approved-sow.md/);
 });
 
-test("short native task points to a distinct standing SOW without replacing Pi's system or tools", async () => {
+test("bounded native task points to a distinct standing SOW without replacing Pi's system or tools", async () => {
   assert.equal(RUN_POLICY.executionInstructions, await source('app/native-task.md'));
   assert.equal(RUN_POLICY.approvedSow, await source('app/standing-sow.md'));
   assert.notEqual(RUN_POLICY.approvedSow, RUN_POLICY.executionInstructions);
-  assert.ok(RUN_POLICY.executionInstructions.trim().split(/\s+/).length <= 350);
+  assert.ok(RUN_POLICY.executionInstructions.trim().split(/\s+/).length <= 800);
+  assert.deepEqual(RUN_POLICY.executionInstructions.match(/^## .+$/gm), [
+    '## 1. Initialize Progress and Follow the Stage Order', '## 2. Execute Each Requirement',
+    '## 3. Use Ego and Preserve Boundaries', '## 4. Report Verified Progress',
+  ]);
   assert.match(RUN_POLICY.executionInstructions, /approved-sow.md/);
   const rpc = await source('app/pi-rpc.mjs');
   assert.match(rpc, /"--skill", join\(cwd, "\.pi\/skills\/ego-browser\/SKILL.md"\)/);
@@ -53,13 +57,19 @@ test("short native task points to a distinct standing SOW without replacing Pi's
   assert.equal(await source('.pi/skills/ego-browser/SKILL.md'), await source('vendor/ego-lite/skills/ego-browser/SKILL.md'));
 });
 
-test("Pi chooses plan and tool order, with no mandatory API-first, editor sequence or save helper", async () => {
-  const prompt = RUN_POLICY.executionInstructions;
+test("registration foundations precede website presentation without API authoring or a mandatory save helper", async () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
   assert.equal(RUN_POLICY.executionPolicy, 'native-pi');
-  assert.match(prompt, /Choose your own plan, tool order and recovery approach/);
-  assert.match(prompt, /Neither tool has priority/);
-  assert.match(prompt, /No required checklist, editor sequence, save helper or second agent/);
-  assert.match(prompt, /RR-EVIDENCE.md describes optional workbook utilities/);
+  assert.match(prompt, /Work in this order: 1\. Event details, registration types, admission\/optional items, availability, fees and price tiers\. 2\. Registration paths and assignments, required admission\/payment steps, discounts and vouchers\. 3\. Fields, questions, choices and advanced\/conditional rules\. 4\. Website theme, branding, header, footer, pages and presentation\./);
+  for (const text of [
+    'Before advancing, earlier-stage requirements must be verified or have specific, evidenced blockers',
+    'Unattempted work is not blocked', 'Record shared blockers once and continue independent earlier-stage work',
+    'Use Site Designer early only for a named current-stage functional dependency',
+    'Complete, save and verify that work, then return to the earliest unfinished stage',
+    'Do not inspect or polish unrelated presentation during foundation work, including checking existing branding matches',
+    'No direct Cvent API calls, alternate browser connections or other agents']) assert.ok(prompt.includes(text), text);
+  assert.doesNotMatch(prompt, /Choose your own plan, tool order|No mandatory editor sequence|must use saveOnce/i);
+  assert.doesNotMatch(prompt, /Neither tool has priority|browserSkill|browserReference|browserExecutable|from resources/);
   for (const file of ['app/native-task.md', 'app/standing-sow.md', 'CVENT-API.md', 'CVENT-API-COVERAGE.md', '.pi/skills/ego-browser/references/steel-bridge.md']) {
     assert.doesNotMatch(await source(file), /Site Designer (?:last|LAST)|API work before unrelated|adapter first|only documented API-unsupported work uses Ego|prefer `saveOnce/i, file);
   }
@@ -67,6 +77,29 @@ test("Pi chooses plan and tool order, with no mandatory API-first, editor sequen
   assert.match(bridge, /Normal Page\s+actions and documented waits remain available; no helper is mandatory/);
   assert.match(bridge, /Continue retains current work; Restore can replace it/);
   assert.match(bridge, /do not necessarily\s+require enabling Cvent's separate Website feature/);
+});
+
+test("RR task initializes coverage before inspection and executes requirement-scoped corrections", () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of [
+    'Before inspecting Cvent, initialize state.json.requirements per RPC-CONNECTION.md',
+    'Populate Remaining immediately, not after the first edit or at the end',
+    'For each requirement or connected dependency group',
+    'Save, establish the outcome, and independently read back persistence',
+    'Immediately update the requirement status, then continue',
+    'Complete this loop before surveying unrelated objects',
+    'Do not inventory the whole event before making grounded corrections',
+    'Correct assignments that differ from the RR',
+    'Reuse or update the verified, mapped event-only path',
+    'Create an RR-named path only when the required object is confirmed missing',
+    'track fields/questions/rules for Stage 3',
+    'Verify saved path identities, assignments and connections—not just names',
+    'age or naming alone does not determine correctness',
+    'Never inspect credentials, dump environment variables, read process environments',
+    'or search secret-bearing files or prior-job transcripts',
+    'prefix the action with READ, EDIT, SAVE_PENDING or VERIFY',
+    'Clicks, Save dispatches, tool success and filesystem writes are not verified Cvent changes',
+  ]) assert.ok(prompt.includes(text), text);
 });
 
 test("standing scope reflects the SOW and later changes, not workbook capability claims", () => {
@@ -99,32 +132,77 @@ test("no-delete, no-publish, selected event, excluded data and payment boundarie
     'shared payment/tax/currency', 'credential/integration-identifier changes']) assert.ok(RUN_POLICY.approvedSow.includes(text), text);
 });
 
-test("native browser task keeps human authentication, ownership, uncertainty and Stop boundaries", () => {
-  for (const text of ['.pi/skills/ego-browser/SKILL.md', 'references/steel-bridge.md', '"$EGO_BROWSER_BIN" nodejs',
-    'assigned local Steel', 'Authentication/security attestations are human-only',
-    'credentials, cookies/storage or hidden/password/token inputs', 'Respect tool denials',
-    'do not bypass them', 'changes to runner/guards', 'Recover ordinary selector/navigation errors',
-    'Actual operator Stop, identity drift, lost AGENT ownership',
-    'expired login, exposed secrets, crash/disconnect or uncertain execution/save still require an immediate stop',
-    'Never replay an uncertain save or clear uncertainty', 'Do not consume another RR or spawn agents']) assert.ok(RUN_POLICY.executionInstructions.includes(text), text);
+test("native browser task loads guidance once per context and preserves authentication, ownership, uncertainty and Stop boundaries", () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of [
+    'Load .pi/skills/ego-browser/SKILL.md and its references/steel-bridge.md once unless already in context',
+    'The Steel reference governs browser lifecycle and save handling',
+    'Use "$EGO_BROWSER_BIN" nodejs in the assigned Steel browser for all Cvent inspection, configuration and verification',
+    'No direct Cvent API calls, alternate browser connections or other agents',
+    'Obey ownership and operator Stop', 'Human login/MFA only',
+    'Never inspect credentials, dump environment variables',
+    'Stop Cvent actions on lost identity/control, expired login, exposed secrets, crash/disconnect or unresolved write outcomes',
+    'Never replay unresolved writes or bypass holds', 'Preserve evidence and reports']) assert.ok(prompt.includes(text), text);
 });
 
-test("prohibited requirements and confirmed pre-dispatch denials are local blockers, not whole-run stops", () => {
-  const prompt = RUN_POLICY.executionInstructions;
-  for (const text of ['If a requirement needs a prohibited action, missing input or unsupported capability',
-    'leave it untouched, record the reason for the final report',
-    'skip dependent work and continue independent requirements',
-    'A confirmed pre-dispatch denial is a local blocker, not an uncertain write or reason to stop the whole run',
-    'uncertain execution/save still require an immediate stop']) assert.ok(prompt.includes(text), text);
+test("unfamiliar editors and local blockers do not replace run-level safety stops", () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of ['Investigate unfamiliar controls using observed evidence and documented methods',
+    'Record shared blockers once and continue independent earlier-stage work',
+    'A pending Save requires bounded observation—not another Save or navigation',
+    'Do not guess URLs or repeat failures without new facts']) assert.ok(prompt.includes(text), text);
+  assert.match(prompt, /Stop Cvent actions on lost identity\/control[^.]+unresolved write outcomes/);
 });
 
-test("Pi verifies requirements and Draft without a category checklist or project-delivery gate", () => {
-  const prompt = RUN_POLICY.executionInstructions;
-  for (const text of ['across all relevant sheets, dependencies and assets', 'Human updates amend execution',
-    'Verify saved values and connections, not clicks/toasts', 'confirm unpublished Draft',
-    'Continue independent executable work', 'completion {requirements, draft}',
-    'both flags true and both arrays empty', 'Report exclusions separately', 'never disguise gaps as N/A']) assert.ok(prompt.includes(text), text);
-  assert.doesNotMatch(prompt, /website\/registration\/dependencies\/draft|requirements\.json|rr-evidence audit|~90|\$\d/);
+test("Pi verifies requirements and Draft using the referenced progress and completion contracts", async () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of ['Read every worksheet, including notes, mappings, continuation rows, formulas/cached values, strikeouts and assets',
+    'independently read back persistence', 'unpublished Draft',
+    'Only independently verified saved results count as completed',
+    'Keep state.json.requirements current after every verified change, existing match or evidenced blocker',
+    'update currentStage, currentAction and updatedAt',
+    'Include the requirement ID and prefix the action with READ, EDIT, SAVE_PENDING or VERIFY',
+    'Report DONE only when every in-scope requirement and Draft are verified, both completion flags are true, blockers/untested are empty, and no unresolved execution remains',
+    'Otherwise report INCOMPLETE', 'Blocked work is not excluded', 'Preserve unresolved writes in unresolved-changes.json',
+    'reports/final-report.md', 'reports/final-report.json per RPC-CONNECTION.md']) assert.ok(prompt.includes(text), text);
+  const contract = await source('RPC-CONNECTION.md');
+  for (const text of ['verified_changed', 'verified_existing', 'Before a new edit to a previously verified requirement, mark it unverified again',
+    'both strict `true` flags', 'empty blocker/untested arrays']) assert.ok(contract.includes(text), text);
+  const example = JSON.parse(contract.split('## Completion contract')[1].match(/```json\n([\s\S]*?)\n```/)[1]);
+  assert.deepEqual(example, { eventId: '<authorizedEvent.apiEventId>', status: 'DONE', completion: { requirements: true, draft: true }, blockers: [], untested: [] });
+  assert.doesNotMatch(prompt, /website\/registration\/dependencies\/draft|requirements\.json|rr-evidence audit|~90/);
+});
+
+test("RR-authoritative updates preserve unspecified data, object identity and scope boundaries", () => {
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of ['Implement the uploaded RR in authorizedEvent within approved-sow.md',
+    'The RR defines the target configuration; live Cvent is the starting state',
+    'Execute and verify—not merely inspect, plan or recommend',
+    'Identify objects by verified codes/IDs, object types or explicit mappings, not similar labels alone',
+    'Compare it with the exact RR values and relationships',
+    'Correct existing differences or create confirmed missing objects',
+    'An existing code does not prove its settings are correct',
+    'Preserve unrelated paths and avoid duplicates',
+    'Repeated RR rows may require distinct fees or relationships',
+    'These creations and in-place reassignments are authorized within scope',
+    'Preserve the bound event ID/name, unpublished Draft, unspecified settings and unrelated content',
+    'Distinguish requirements from examples and blank templates', 'Never invent missing values',
+    'Never delete/archive objects, remove widgets or placements, delete-and-recreate, reset, clone or publish',
+    'No shared-account/object changes, attendee/CRM access, communications or Sessions/Speakers configuration',
+    'Prove permitted scope before writing']) assert.ok(prompt.includes(text), text);
+  assert.doesNotMatch(prompt, /Leave Agenda[^.]*untouched|overwrite everything|delete-and-recreate the event/);
+});
+
+test("efficiency guidance preserves verification without adding a dollar-based stopping threshold", () => {
+  assert.equal(RUN_POLICY.spendingLimitEnabled, false);
+  assert.equal(RUN_POLICY.runCostLimitUSD, undefined);
+  const prompt = RUN_POLICY.executionInstructions.replace(/\s+/g, ' ');
+  for (const text of ['Batch grounded edits within an understood editor, but never across uncertainty',
+    'Complete this loop before surveying unrelated objects',
+    'Only independently verified saved results count as completed',
+    'Obey ownership and operator Stop',
+    'Never replay unresolved writes or bypass holds']) assert.ok(prompt.includes(text), text);
+  assert.doesNotMatch(prompt, /\$30|remaining budget is insufficient|per-run spending stop/);
 });
 
 test("guidance preserves source interpretation, independent readback and actual capability boundaries", async () => {

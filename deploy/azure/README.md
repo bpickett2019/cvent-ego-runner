@@ -1,6 +1,241 @@
 # Azure three-instance deployment preparation
 
-## Staging AI enabled — CURRENT (2026-09-21 21:29 UTC)
+## Simplified RR prompt — CURRENT (2026-09-22 15:37 UTC)
+
+The operator-approved simplified prompt is deployed on all three staging hosts:
+**747 words / 5,709 characters**, SHA256
+`1449c1f4c8f00a002fdb3a2efe08ba38bc965eb4ed2b7920564166d41e23993c`.
+It retains the four-stage RR order, ledger before inspection, requirement-scoped
+read/edit/save/readback loops, explicit missing-path creation and incorrect-assignment
+correction, saved relationship verification, progress reporting and safety boundaries.
+Old paths are judged against RR mappings, not rejected merely for their age/name.
+The task text is 1,607 characters shorter; performance improvement is not measured.
+
+Only `app/native-task.md` and `public/index.html` changed remotely. Dashboard copy now
+says to correct existing differences in place rather than create separate objects for
+differences. The previous agent-reported stage/action and Completed/Remaining display
+remains. Opus5/MEDIUM/no-dollar-stop, standing SOW, browser/API policy, credentials,
+model config, vendor patch/pin, gateway code/auth/expiry/claims and accounting are unchanged.
+No active runs existed at preflight. All old jobs pass execution clearance; terminal
+Return requests were explicitly checked to reject409 without changing data or launching
+Pi. Gateway paused/resumed for coordinated file replacement; backend PIDs unchanged.
+All 391 non-profile data files, including controller locks, were byte-preserved; profiles
+retained. Staging tracked cost remains **$42.20530275**. No new paid run/browser launched.
+
+**Checks:** full runtime suite392 pass/one known absent-private-rr-plan.json failure;
+authenticated rendered root redirects to /workspaces/1/, all three workspace switches
+and empty-input Start validation pass, served index/module hashes match. Anonymous TLS
+root/workspaces/module/API/viewer remain401. Return's successful native launch has prior
+user-run evidence with the same unchanged controller; this update did NOT perform a new
+human-login/paid Return or prove full saved RR acceptance. Stopped jobs cannot resume.
+
+**Not production acceptance:** exposed Anthropic key rotation is still outstanding;
+no key was rotated or copied into these docs. Prompt rules are not credential isolation.
+Site Designer CDP failures and 30-hour post-run retention remain unresolved. Another
+supervised fresh build after human login/key remediation is needed to demonstrate
+execution and saved results; no automated paid continuation is authorized here.
+
+Private receipts: `logs/staging-simplified-prompt-20260922/`. New exclusive backups:
+`/var/lib/cvent-ego-simplified-20260922t1535/` on backends and
+`/var/lib/cvent-ego-gateway-simplified-20260922t1535/` on the gateway. NEVER replay
+the new or prior dispatchers or clear intents. Source remains uncommitted; original
+checkout and all local servers untouched. No maintenance operation remains in flight.
+
+## RR execution-loop prompt and live progress — prior (2026-09-22 15:16 UTC)
+
+At the operator's explicit request, all active staging execution was stopped through
+its controller and all three workspaces were confirmed USER-owned/browser stopped.
+Opus job `92210700-ff44-4969-bb89-ab28c9b7b597` settled at 15:06:28 UTC, cost
+**$8.26559875**; cumulative staging cost **$42.20530275**. All saved jobs now pass
+execution clearance. No lock/claim deletion or automatic next run was performed.
+
+All three hosts now have the **989-word** revised `app/native-task.md`, SHA256
+`386cc1a5d27c4b0409da081b21690f264715aa4c5fe14185210896e9e9f99a6c`.
+It requires the RR ledger before Cvent inspection, requirement-scoped
+inspect/edit/save/readback loops within the existing four-stage order, explicit
+creation/configuration/reassignment of RR-required event paths, immediate progress
+updates, and a ban on environment/process-environment/secret-bearing transcript dumps.
+Unrelated legacy objects remain protected; missing inputs are not permission to guess.
+
+`public/app.js` now displays the requirement ledger's agent-reported current stage
+and READ/EDIT/SAVE_PENDING/VERIFY/LOCAL action rather than hiding them behind generic
+native tool activity. Without a requirements array, legacy/stale activity still uses
+the prior safe fallback. These are agent-reported labels, **not independent per-turn
+Cvent write counters**. Completed/Remaining still require populated requirement data;
+a Save attempt or local file write cannot promote a requirement to verified.
+
+Only `app/native-task.md`, `RPC-CONNECTION.md` and `public/app.js` changed remotely.
+Gateway ingress was briefly paused/resumed; no backend restart was needed because
+prompt getters/static assets read current files. Opus5/medium/no-dollar-stop, credentials,
+model config, vendor/dependencies, gateway code/auth/expiry/claims remained unchanged.
+All **391 non-profile data files (including controller locks)** were byte-preserved;
+profiles retained. Full tests: **391 pass, one known missing private rr-plan.json**.
+Rendered authenticated dashboard/module/Start-handler checks passed all three workspaces
+without upload, browser provisioning, Return or inference. No paid RR acceptance or
+performance improvement is claimed. Source remains uncommitted; original checkout and
+all local servers untouched. The next fresh job captures this prompt; saved prompts
+and stopped sessions were not rewritten or resumed.
+
+**Security remains unresolved:** the stopped Opus agent's broad `env` filter printed
+a nonempty unmasked Anthropic API key into private tool/session output. No key value
+was copied into these docs or public UI. The operator was advised to rotate the key
+before production use. It has NOT been rotated; prompt prohibitions are not credential
+isolation or remediation. Raw private job evidence is retained; do not forward it.
+Browser Site Designer timeout and post-run retention also remain unresolved.
+
+Receipts: `logs/staging-rr-execution-fix-20260922/`. Exclusive remote backups/intents:
+`/var/lib/cvent-ego-rr-execution-20260922t1512/` on backends and
+`/var/lib/cvent-ego-gateway-rr-execution-20260922t1512/` on the gateway.
+NEVER replay their dispatchers or clear markers. No operation remains in flight.
+
+## Opus 5 / medium switch — prior (2026-09-22 14:39 UTC)
+
+All three staging backends now load **Anthropic `claude-opus-5` / MEDIUM**, with
+**no dollar-based stopping cap**. After the operator explicitly authorized restart,
+public ingress was paused, the idle backends were updated/restarted, and the gateway
+was resumed. No paid run, native execution session or browser was launched.
+
+Only `app/pi-rpc.mjs`, `RPC-CONNECTION.md`, the model selector/reasoning environment
+and an added Opus model definition changed on each backend. The launcher accepts
+validated `PI_THINKING_LEVEL`; its default remains `high`, preserving local behavior.
+Existing team credentials, Sonnet model definition, native-task/standing SOW,
+dependencies, vendor pin/patch and gateway code/security/expiry are unchanged.
+All **315 non-profile data files** were byte-preserved; browser profiles retained.
+
+Actual restarted process environments confirm Opus/medium on all hosts. Model
+metadata authentication and offline registration passed; fake-child launcher checks
+verified arguments without starting Pi. The installed provider's request serializer
+confirmed adaptive MEDIUM using a dummy key and abort-before-send hook: no inference
+request. Each host passed 20 installation checks; 18 focused RPC/slot tests pass.
+Gateway workspace/config/asset checks and anonymous public HTTPS401 checks pass.
+This is configuration acceptance, not a paid-run performance or full-RR acceptance.
+
+**Stale read-only hold separately reconciled at 14:46 UTC:** Workspace 1 job
+`26f379e9-794e-4daa-b5ce-cd6bc9bafd78` settled after Operator Stop at
+`2026-09-22T14:24:27.057Z`, cost **$3.8687769**, workspace cumulative **$33.939704**.
+The restart initially preserved its operation lock and shared-slot claim. After the
+operator requested removal of blocking locks, exact session evidence identified the
+orphan lock as an aborted **read-only `page.url()`** command, not a pending Save.
+Native PID68695 and operation PID70803 were absent; Steel cleanup/accounting confirmed,
+no uncertainty markers. Only that exact lock was atomically archived, byte-preserved,
+under the stopped job's `receipts/operator-reconcile-readonly-20260922t1445/`.
+All 24 other existing job files were byte-preserved. Execution clearance now returns
+**true**; the gateway can release the old claim through its normal next-Return path.
+No live/controller/uncertainty lock or gateway claim was manually removed, no safeguards
+were disabled, and no browser action, restart or paid run was performed by reconciliation.
+Receipt: `logs/staging-opus-medium-20260922/reconciliation-receipt.json`. Never replay
+`reconcile-readonly-lock-once.py`. This clears an evidenced stale resource, not RR
+completion or blanket uncertainty. At 14:47 UTC the user's new workspace1 job
+`92210700-ff44-4969-bb89-ab28c9b7b597` was USER-owned, browser open, awaiting Return,
+AI not started/$0. Recheck live state before any subsequent action.
+
+Private evidence: `logs/staging-opus-medium-20260922/`, including per-host apply-v1
+receipts and gateway-resume-v1/public-auth receipts. New exclusive remote backups:
+`/var/lib/cvent-ego-opus5-medium-20260922t1429/` on backends and
+`/var/lib/cvent-ego-gateway-opus5-medium-20260922t1429/` on the gateway. NEVER replay
+the dispatchers or clear intents. Source remains uncommitted; original checkout and
+all local servers were untouched. Browser timeout/retention/progress issues remain.
+
+## Staging Start routing repair — CURRENT DEPLOYED (2026-09-22 13:58 UTC)
+
+Fixed the dead Start button on the authenticated root page. The divergent live
+gateway retained a root-workspace alias with a hardcoded asset list that omitted
+`requirement-progress.js` (404), preventing the entire application module from
+initializing. Its root-form workspace URLs also disagreed with the deployed UI's
+prefix-only configuration. The earlier replacement verified prefixed assets but
+missed this real root entrypoint; rendered acceptance was not previously proven.
+
+The gateway now uses the repository's canonical workspace routing: authenticated
+`/` and `/index.html` (including query strings) redirect to `/workspaces/1/`,
+and all workspace links/configuration use `/workspaces/{1,2,3}/`. No separate
+root asset/API alias exists. New gateway SHA256:
+`9ed5c3cdaea3d0f59cb9999db382d5e3df83ff5844da991c696b78f4da86d3a3`.
+Only the gateway restarted. Caddy/Basic, expiry, execution-slot module and claim
+files, backend services, jobs and costs were preserved. No browser or paid build
+was launched. Existing tabs need a refresh.
+
+Authenticated rendered Ego verification passed for all three dashboards: module
+loads succeeded, workspace switching worked, and clicking Start with no RR gave
+`Choose the RR .xlsx first`. This proves the button initializes and handles input;
+no real workbook upload, Steel provisioning, Return, or full RR acceptance was
+performed. The failed live variant is regression-tested against the actual UI
+module graph and workspace configuration. 24 focused tests and 27 deployment
+tests passed; full runtime gate is 386 pass/one known private-fixture failure.
+
+Private evidence: `logs/staging-start-fix-20260922/`, especially
+`gateway-receipt.json` and `rendered-ui-check.json`. New root-only backup/intent:
+`/var/lib/cvent-ego-gateway-start-fix-20260922/`. Never replay its dispatcher or
+clear intents. The 580-word task, Sonnet 5/high/no-dollar-cap and lifecycle remain
+unchanged. Site Designer CDP reliability and post-run browser retention remain
+separate pending work, not completed by this routing repair.
+
+## Foundation-first prompt refresh — prior (2026-09-22 12:39 UTC)
+
+The user's exact **580-word** replacement task is now installed on all three
+workspaces for future Start Builds. It requires verified or evidenced-blocked
+foundation work before advancing, permits early Site Designer only for a named
+functional dependency, and forbids presentation inspection/polish during foundation
+work. Only `app/native-task.md` changed on the running hosts; its new SHA256 is
+`820de0c037b98efbb04500efbbfd365af3a9f79ed7e08ec85033b3dbaa05c039`.
+All other application hashes from the replacement below remain unchanged.
+
+No restart, paid prompt, browser launch, runtime lifecycle or model change.
+Sonnet 5/high/no-dollar-cap and all gateway/auth/expiry policies remain as below.
+All saved data (including controller locks) remained unchanged. Runtime tests:
+385 passed, the same one missing-private-fixture failure. Private receipts:
+`logs/steel-lifecycle-20260922/cvent-ego-*-prompt-receipt.json`.
+New one-time backups/intents: `/var/lib/cvent-ego-prompt-20260922-foundations/`.
+Never replay its dispatcher or clear its intent.
+
+The requested Steel lifetime investigation did **not** establish an expiry:
+local job `ee993d40-a808-4f5d-a2be-3c5ca1f432cf` reported a Site Designer
+`Page.getFrameTree` CDP timeout, then normal controller settlement stopped its
+container. Pinned self-hosted Steel 0.5.3 reports timeout 0 and has no session
+expiry timer in its inspected session service/controller; hosted Steel's separate
+docs describe a plan-dependent maximum of 24 hours. No unsupported 30-hour setting
+or post-run retention change was introduced. Stop/safety/settlement cleanup remains.
+
+## Isolated-version replacement — prior (2026-09-22 12:28 UTC)
+
+At the user's explicit replacement request, all three workspaces at
+**https://staging.app-chartsdarts-dashboard.com/** now serve the source from
+`/Users/bailey/cvent-ego-runner-github`, including the exact 391-word RR task,
+captured standing SOW, requirement-status dashboard and lazy-page Save repair.
+All 57 allowlisted application source files match the approved snapshot;
+20 paths changed on each host. This deliberately replaces the divergent staging
+controller/UI behavior with the isolated version, rather than merging it.
+Take Control again ends the run and cleans up its browser; saved jobs are not resumed.
+
+The existing team-funded **Anthropic `claude-sonnet-5`** configuration is retained
+on all three actual app processes. Launcher thinking is **high**, dollar-based
+stops are disabled, and the durable gateway still admits **one paid build at a
+time**, not three. Fresh model metadata authentication passed without inference.
+No new Pi session, browser, RR execution or Cvent authoring was started.
+
+The previously authorized Workspace 1 human-control job was stopped through its
+normal controller and cleared before rollout. Gateway ingress was paused while
+all backends were idle and restarted, then restored after source/asset/runtime
+verification. **287 non-profile data files were byte-preserved**, profiles retained,
+and tracked cloud spending remained **$30.0709271**. Credentials, model config,
+service config, Caddy/Basic login, gateway source and claim evidence are unchanged.
+Access still expires **2026-10-05T21:49:22.218610+00:00**. Anonymous public TLS
+root/workspace/API/viewer checks returned 401; all workspace routing and six
+served asset hashes passed. Each backend passed 20 installation checks.
+
+Private evidence: `logs/staging-update-20260922/receipt.json` and per-host receipts.
+New exclusive remote backups/intents: `/var/lib/cvent-ego-upgrade-20260922-rr391/`
+on backends and `/var/lib/cvent-ego-gateway-upgrade-20260922-rr391/` on the gateway.
+**Never replay their dispatchers or clear intents.** The old source manifest and
+older activation receipts remain historical; this replacement's exact hashes are
+in the new receipts. No dependency/vendor upgrade, Git commit/push or local-server
+restart occurred. The original checkout and its servers remain untouched.
+
+Runtime evidence: 385 passing tests, one known missing private `rr-plan.json`
+fixture failure; 27 deployment and five upgrade-safety tests passed. Authenticated
+rendered cloud UI, full RR completion, savings and three concurrent paid sessions
+are not newly proven. No automatic paid acceptance run is authorized.
+
+## Staging AI enabled — prior (2026-09-21 21:29 UTC)
 
 **Activated** https://staging.app-chartsdarts-dashboard.com/ on explicit user request.
 All three workspaces load team Claude Sonnet 5 (`claude-sonnet-5`) and Cvent API

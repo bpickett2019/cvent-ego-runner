@@ -1,4 +1,5 @@
 import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';
+import { requirementProgress } from './requirement-progress.js';
 const basePath = workspaceBase(location.pathname);
 const appPath = path => workspacePath(basePath, path);
 const sessionStorage = scopedStorage(window.sessionStorage, basePath);
@@ -134,11 +135,13 @@ async function refresh() {
     $("status").textContent = active() ? (job.workflow === "login-first" && !job.aiStartedAt ? "AI NOT STARTED · $0 this run" : job.phase === "AWAITING_INPUT" ? "WAITING FOR YOU" : "Running") : statusLabel(job?.status) || "Not running";
     const executing = active() && job.phase === "EXECUTING";
     const ended = job && ["STOPPED", "DONE", "INCOMPLETE"].includes(statusLabel(job.status));
-    $("stage").textContent = executing ? "Executing RR" : active() ? progress.currentStage || job.phase : statusLabel(job?.status) || "UPLOAD";
+    const reportedStage = executing && Array.isArray(progress.requirements) && typeof progress.currentStage === "string" ? progress.currentStage.trim() : "";
+    const reportedAction = executing && Array.isArray(progress.requirements) && typeof progress.currentAction === "string" ? progress.currentAction.trim() : "";
+    $("stage").textContent = executing ? reportedStage || "Executing RR" : active() ? progress.currentStage || job.phase : statusLabel(job?.status) || "UPLOAD";
     const retiredStartupBlock = ended && job.stopReason?.startsWith("Operator decision required before a new RR:");
     $("action").textContent = retiredStartupBlock ? "This build stopped before AI under a retired startup rule. Upload a new RR to start fresh."
       : ended ? `${job.stopReason || "Execution ended"}. ${job.status === "FINISHED" || job.status === "REVIEW_REQUIRED" ? "This historical run has no verified full-RR completion result." : job.executionSummary || "Saved execution results are available below."}`
-      : executing ? job.executionActivity ? `${job.executionActivity.at} · ${job.executionActivity.message}` : "Native Pi is working; saved results require separate verification."
+      : executing ? reportedAction ? `Agent-reported: ${reportedAction}` : job.executionActivity ? `${job.executionActivity.at} · ${job.executionActivity.message}` : "Native Pi is working; saved results require separate verification."
       : job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
     $("agentReply").textContent = executing ? "" : job?.lastAssistantText || job?.intake?.summary || "";
     $("question").textContent = job?.lastAssistantText || "";
@@ -151,12 +154,17 @@ async function refresh() {
     if (job && !entries.some(item => item.id === job.id)) entries.unshift(job);
     $("jobSelect").replaceChildren(Object.assign(node("option", workbook?.originalName || "Select a saved run"), { value: "" }), ...entries.map(item => Object.assign(node("option", `${item.originalName} · ${statusLabel(item.status)}`), { value: item.id })));
     $("jobSelect").value = jobId || ""; $("jobSelect").disabled = !!active() || submitting;
-    renderList("completed", progress.completed); renderList("pending", progress.pending);
+    const checkpoints = requirementProgress(progress);
+    renderList("completed", checkpoints.completed); renderList("pending", checkpoints.pending);
+    renderList("excluded", checkpoints.excluded);
+    $("excludedProgress").hidden = !checkpoints.excluded.length;
     renderList("activity", Array.isArray(job?.activity) ? job.activity.slice(-100).reverse().map(entry => `${entry.at} · ${entry.message}`) : list(progress.activity).slice(-10).reverse());
-    const count = list(progress.completed).length;
+    const count = checkpoints.completed.length;
     $("completionTitle").textContent = count ? "Agent-reported progress" : "No completed work reported";
-    $("completionCount").textContent = `${count} reported checkpoints · not independent acceptance`;
-    $("progressLists").hidden = !count && !list(progress.pending).length;
+    $("completionCount").textContent = checkpoints.mode === 'requirements'
+      ? `${checkpoints.changedCount} changed · ${checkpoints.existingCount} existing matches · ${checkpoints.pending.length} remaining · ${checkpoints.excluded.length} excluded · not independent acceptance`
+      : `${count} reported checkpoints · not independent acceptance`;
+    $("progressLists").hidden = !count && !checkpoints.pending.length && !checkpoints.excluded.length;
     const executionStart = job?.aiStartedAt || (job?.workflow !== "login-first" ? job?.startedAt : null);
     const executionEnd = active() ? Date.now() : Date.parse(job?.finishedAt || job?.updatedAt || executionStart);
     const seconds = Math.floor((executionEnd - Date.parse(executionStart)) / 1000);

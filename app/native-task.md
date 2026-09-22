@@ -1,7 +1,116 @@
-Execute the uploaded RR for authorizedEvent. Read this job's approved-sow.md for the standing scope and original.xlsx across all relevant sheets, dependencies and assets. Use this workbook and current live saved Cvent state, not historical tasks/transcripts/workbooks. Choose your own plan, tool order and recovery approach. Implement and independently verify the applicable requirements; do not stop at a review or plan.
+# RR Execution
 
-For browser automation, read .pi/skills/ego-browser/SKILL.md and references/steel-bridge.md and use "$EGO_BROWSER_BIN" nodejs with assigned local Steel. Supported Cvent API tools are also available through "$CVENT_API_BIN"; consult CVENT-API.md when useful. Neither tool has priority. RR-EVIDENCE.md describes optional workbook utilities; use native tools as needed. No required checklist, editor sequence, save helper or second agent.
+Implement the uploaded RR in authorizedEvent within approved-sow.md.
+The RR defines the target configuration; live Cvent is the starting state.
+Correct differences and create confirmed missing requirements.
+Execute and verify—not merely inspect, plan or recommend.
 
-Human updates amend execution unless requesting pause/Stop. Authentication/security attestations are human-only; do not inspect credentials, cookies/storage or hidden/password/token inputs. Respect tool denials and the SOW boundaries; do not bypass them through direct connections, substitute browsers or changes to runner/guards. Recover ordinary selector/navigation errors. If a requirement needs a prohibited action, missing input or unsupported capability, leave it untouched, record the reason for the final report, skip dependent work and continue independent requirements. A confirmed pre-dispatch denial is a local blocker, not an uncertain write or reason to stop the whole run. Actual operator Stop, identity drift, lost AGENT ownership, expired login, exposed secrets, crash/disconnect or uncertain execution/save still require an immediate stop. Never replay an uncertain save or clear uncertainty to continue.
+## 1. Initialize Progress and Follow the Stage Order
 
-Verify saved values and connections, not clicks/toasts, and confirm unpublished Draft. Continue independent executable work when a requirement is blocked. Keep state.json useful for progress and save a source-referenced summary in reports/final-report.md. For the dashboard, write reports/final-report.json with eventId, status (DONE/INCOMPLETE), completion {requirements, draft}, and blockers/untested arrays. DONE means all applicable requirements implemented and verified, both flags true and both arrays empty. Report exclusions separately; never disguise gaps as N/A. Retain uncertain changes in unresolved-changes.json when needed. Do not consume another RR or spawn agents.
+Read every worksheet, including notes, mappings, continuation rows,
+formulas/cached values, strikeouts and assets. Distinguish requirements
+from examples and blank templates. Never invent missing values.
+
+Before inspecting Cvent, initialize state.json.requirements per
+RPC-CONNECTION.md. Use stable IDs, source cells, expected values,
+stages and unverified statuses. Include every identified in-scope
+requirement; separate genuine exclusions. Populate Remaining immediately,
+not after the first edit or at the end.
+
+Work in this order:
+1. Event details, registration types, admission/optional items,
+   availability, fees and price tiers.
+2. Registration paths and assignments, required admission/payment
+   steps, discounts and vouchers.
+3. Fields, questions, choices and advanced/conditional rules.
+4. Website theme, branding, header, footer, pages and presentation.
+
+Before advancing, earlier-stage requirements must be verified or have
+specific, evidenced blockers. Unattempted work is not blocked.
+Record shared blockers once and continue independent earlier-stage work.
+
+Use Site Designer early only for a named current-stage functional
+dependency. Complete, save and verify that work, then return to the
+earliest unfinished stage. Do not inspect or polish unrelated presentation
+during foundation work, including checking existing branding matches.
+
+## 2. Execute Each Requirement
+
+For each requirement or connected dependency group:
+1. Inspect the relevant current configuration.
+2. Compare it with the exact RR values and relationships.
+3. Correct existing differences or create confirmed missing objects.
+4. Save, establish the outcome, and independently read back persistence.
+5. Immediately update the requirement status, then continue.
+
+Complete this loop before surveying unrelated objects. Additional
+inspection must resolve a named missing fact, identity, scope, control
+or verification need. Do not inventory the whole event before making
+grounded corrections.
+
+Identify objects by verified codes/IDs, object types or explicit mappings,
+not similar labels alone. An existing code does not prove its settings
+are correct. Repeated RR rows may require distinct fees or relationships.
+
+For registration paths:
+- Verify each registration type by code and its RR-required path.
+- Correct assignments that differ from the RR.
+- Reuse or update the verified, mapped event-only path.
+- Create an RR-named path only when the required object is confirmed missing.
+- Configure its required current-stage functional steps, admissions and
+  payment; track fields/questions/rules for Stage 3.
+- Verify saved path identities, assignments and connections—not just names.
+
+These creations and in-place reassignments are authorized within scope.
+An old path may remain or be reused when appropriate; age or naming alone
+does not determine correctness. Preserve unrelated paths and avoid duplicates.
+
+Batch grounded edits within an understood editor, but never across
+uncertainty. Investigate unfamiliar controls using observed evidence and
+documented methods. Do not guess URLs or repeat failures without new facts.
+
+## 3. Use Ego and Preserve Boundaries
+
+Load .pi/skills/ego-browser/SKILL.md and its
+references/steel-bridge.md once unless already in context.
+The Steel reference governs browser lifecycle and save handling.
+
+Use "$EGO_BROWSER_BIN" nodejs in the assigned Steel browser for all
+Cvent inspection, configuration and verification. No direct Cvent API
+calls, alternate browser connections or other agents.
+
+Preserve the bound event ID/name, unpublished Draft, unspecified settings
+and unrelated content. Never delete/archive objects, remove widgets or
+placements, delete-and-recreate, reset, clone or publish.
+No shared-account/object changes, attendee/CRM access, communications
+or Sessions/Speakers configuration. Prove permitted scope before writing.
+
+Human login/MFA only. Never inspect credentials, dump environment variables,
+read process environments, or search secret-bearing files or prior-job
+transcripts. Use supplied executable paths directly.
+
+Obey ownership and operator Stop. Stop Cvent actions on lost identity/control,
+expired login, exposed secrets, crash/disconnect or unresolved write outcomes.
+Never replay unresolved writes or bypass holds. Preserve evidence and reports.
+A pending Save requires bounded observation—not another Save or navigation.
+
+## 4. Report Verified Progress
+
+Before each meaningful batch, update currentStage, currentAction and
+updatedAt. Include the requirement ID and prefix the action with READ,
+EDIT, SAVE_PENDING or VERIFY; use LOCAL for workbook/report work.
+
+Keep state.json.requirements current after every verified change,
+existing match or evidenced blocker. Only independently verified saved
+results count as completed. Clicks, Save dispatches, tool success and
+filesystem writes are not verified Cvent changes.
+
+Missing inputs block dependent work, not unrelated executable requirements.
+Never fabricate values, progress or completion. Blocked work is not excluded.
+
+Write reports/final-report.md and reports/final-report.json per
+RPC-CONNECTION.md. Preserve unresolved writes in unresolved-changes.json.
+
+Report DONE only when every in-scope requirement and Draft are verified,
+both completion flags are true, blockers/untested are empty, and no
+unresolved execution remains. Otherwise report INCOMPLETE.

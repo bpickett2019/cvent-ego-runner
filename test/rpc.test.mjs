@@ -27,6 +27,7 @@ function nativeFake(handler) {
   });
   const rpc = new PiRpc({ cwd: "/tmp", workspace: "/tmp/job", env: { PI_PROVIDER: "working", PI_MODEL: "model" }, spawnProcess: (_bin, args, options) => {
     assert.ok(args.includes("rpc")); assert.ok(args.includes("model"));
+    assert.equal(args[args.indexOf("--thinking") + 1], "high", "operator-selected runtime reasoning");
     assert.ok(args.includes("--no-context-files"), "runtime must not inherit development checkpoints");
     assert.ok(!args.includes("--append-system-prompt"), "no overlapping application system policy");
     assert.ok(!args.includes("--system-prompt"), "retain native tools/system prompt");
@@ -39,6 +40,33 @@ function nativeFake(handler) {
   } });
   return { rpc, child, commands };
 }
+test("native launcher honors explicit thinking without changing the high default", () => {
+  for (const thinking of [undefined, "off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    const env = { PI_PROVIDER: "anthropic", PI_MODEL: "claude-opus-5" };
+    if (thinking !== undefined) env.PI_THINKING_LEVEL = thinking;
+    let launches = 0;
+    new PiRpc({ cwd: "/tmp", workspace: "/tmp/job", env, spawnProcess: (_bin, args) => {
+      launches++;
+      assert.equal(args[args.indexOf("--thinking") + 1], thinking ?? "high");
+      assert.equal(args[args.indexOf("--provider") + 1], "anthropic");
+      assert.equal(args[args.indexOf("--model") + 1], "claude-opus-5");
+      const child = new EventEmitter();
+      return Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+    } });
+    assert.equal(launches, 1);
+  }
+});
+test("invalid configured thinking fails before spawning native execution", () => {
+  for (const thinking of ["", "MEDIUM", "unknown", "medium --resume", 3]) {
+    let launches = 0;
+    assert.throws(() => new PiRpc({ cwd: "/tmp", workspace: "/tmp/job",
+      env: { PI_PROVIDER: "anthropic", PI_MODEL: "claude-opus-5", PI_THINKING_LEVEL: thinking },
+      spawnProcess: () => { launches++; },
+    }), /Invalid PI_THINKING_LEVEL/);
+    assert.equal(launches, 0);
+  }
+});
+
 test("fresh session is idle, confirmed, changed; LF framing preserves Unicode", async () => {
   let stateCalls = 0;
   const { rpc, child, commands } = nativeFake(command => command.type === "get_state" ? { sessionId: ++stateCalls === 1 ? "old" : "new", isStreaming: false, isCompacting: false, pendingMessageCount: 0, messageCount: 0 } : command.type === "get_session_stats" ? { cost: 0 } : { cancelled: false });
@@ -199,7 +227,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal(fake.commands[0].type, "new_session");
   const prompt = fake.commands.find(c => c.type === 'prompt');
   assert.match(prompt.message, /original.xlsx/);
-  assert.match(prompt.message, /original.xlsx across all relevant sheets/);
+  assert.match(prompt.message, /Read every worksheet/);
   assert.doesNotMatch(prompt.message, /allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   const initialState = JSON.parse(await readFile(join(first.workspace, 'state.json'), 'utf8'));
   assert.equal(initialState.currentStage, 'Executing RR');

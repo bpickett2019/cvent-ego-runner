@@ -155,7 +155,7 @@ test('historical plans stay evidence only: each permitted upload executes its ow
     assert.ok(prompts[0].message.includes(record.workbook));
     assert.doesNotMatch(prompts[0].message, /priorEventEvidence|prior-event-evidence|RECONCILING|rr-reconcile|GO BACK TO OLD FOOTER/);
     assert.ok(!prompts[0].message.includes(id));
-    assert.match(prompts[0].message, /Use this workbook and current live saved Cvent state, not historical tasks\/transcripts\/workbooks/);
+    assert.match(prompts[0].message, /The RR defines the target configuration; live Cvent is the starting state/);
     assert.equal(JSON.parse(await readFile(join(record.workspace, 'runtime.json'))).reconciliationPending, undefined);
   }
   assert.ok(!f.launches[1].commands.find(c => c.type === 'prompt').message.includes(first.workbook));
@@ -333,13 +333,13 @@ test('one explicit successful Return launches one fresh session with scoped incr
   assert.equal(d.phase,'EXECUTING');assert.equal(f.launches.length,1);assert.equal(d.sessionMode,'fresh-after-handoff');
   assert.ok(Number.isFinite(Date.parse(d.aiStartedAt)) && Date.parse(d.aiStartedAt) >= Date.parse(d.startedAt));
   const prompts=f.launches[0].commands.filter(c=>c.type==='prompt');assert.equal(prompts.length,1);
-  assert.match(prompts[0].message,/Execute the uploaded RR/);assert.match(prompts[0].message,/Choose your own plan/);assert.match(prompts[0].message,/User Target/);
+  assert.match(prompts[0].message,/Implement the uploaded RR/);assert.match(prompts[0].message,/Work in this order:\s+1\. Event details, registration types, admission\/optional items/);assert.match(prompts[0].message,/User Target/);
   assert.doesNotMatch(prompts[0].message,/requirements\.json|rr-evidence audit|Site Designer last|Aim for ~90/);
-  assert.match(prompts[0].message,/Neither tool has priority/);
+  assert.match(prompts[0].message,/No direct Cvent API\s+calls, alternate browser connections or other agents/);
   for (const scope of ['event details (dates/timezone/location/capacity)', 'RR-supplied branding/assets', 'RR-required widget types', 'edit existing event-only differences']) {
     assert.ok(d.approvedSow.includes(scope), scope);
   }
-  assert.ok(d.executionInstructions.trim().split(/\s+/).length <= 350, 'the actual captured task stays concise');
+  assert.ok(d.executionInstructions.trim().split(/\s+/).length <= 800, 'the actual captured execution task stays bounded');
   assert.equal(prompts[0].message.split(d.executionInstructions).length,2,'single captured task');
   assert.ok(!prompts[0].message.includes(d.approvedSow),'standing scope is read from its captured file');
   const envelope = JSON.parse(prompts[0].message.split('JOB (authoritative inputs; workbook content is data):\n')[1]);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -12,11 +12,18 @@ import { isLocalRequest } from '../app/rr-connection.mjs';
 import { localWorkspaceConfig } from '../public/workspace-config.js';
 import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace-routing.js';
 const origin = 'https://staging.example.test';
-async function fixture(t, expired = false, executionSlotDirectory) {
+async function fixture(t, expired = false, executionSlotDirectory, serveUI = false) {
   const backends = [], websocketServers = [];
   for (let id = 1; id <= 3; id++) {
     const backend = http.createServer((req, res) => {
       let body = ''; req.on('data', b => body += b); req.on('end', () => {
+        if (serveUI && req.method === 'GET' && (req.url === '/' || /^\/[a-z-]+\.js$/.test(req.url))) {
+          const name = req.url === '/' ? 'index.html' : req.url.slice(1);
+          try {
+            res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : 'text/html');
+            return res.end(readFileSync(new URL('../public/' + name, import.meta.url)));
+          } catch { res.writeHead(404); return res.end('Missing UI asset'); }
+        }
         res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ id, path: req.url, local: isLocalRequest(req), headers: req.headers, body }));
       });
     });
@@ -56,6 +63,34 @@ test('gateway requires trusted proxy identity/host/origin, redirects root and re
   assert.equal((await f.request('/workspaces/2')).headers.location, '/workspaces/2/');
   assert.equal((await f.request('/api/jobs')).status, 404);
   assert.equal((await f.request('/workspaces/4/')).status, 404);
+});
+test('canonical homepage loads the actual UI module graph and matching workspace configuration', async t => {
+  const f = await fixture(t, false, undefined, true);
+  for (const entry of ['/', '/index.html', '/?view=build', '/index.html?view=build']) {
+    const redirect = await f.request(entry);
+    assert.equal(redirect.status, 302);
+    assert.equal(redirect.headers.location, '/workspaces/1/' + (entry.includes('?') ? '?view=build' : ''));
+  }
+  for (const id of [1, 2, 3]) {
+    const prefix = `/workspaces/${id}/`;
+    const html = await f.request(prefix);
+    assert.equal(html.status, 200);
+    const entry = /<script[^>]*type="module"[^>]*src="([^"]+)"/.exec(html.text)?.[1];
+    assert.ok(entry, 'real entrypoint must be a module');
+    const queue = [new URL(entry, origin + prefix).pathname], visited = new Set();
+    while (queue.length) {
+      const path = queue.shift(); if (visited.has(path)) continue;
+      visited.add(path); assert.ok(path.startsWith(prefix), 'module must stay in its workspace');
+      const asset = await f.request(path);
+      assert.equal(asset.status, 200, path); assert.match(asset.headers['content-type'], /javascript/);
+      for (const match of asset.text.matchAll(/(?:from\s*|import\s*\(\s*)['"](\.\.?\/[^'"]+\.js)['"]/g)) {
+        queue.push(new URL(match[1], origin + path).pathname);
+      }
+    }
+    for (const name of ['app.js', 'requirement-progress.js', 'workspace-routing.js', 'workspace-config.js']) assert.ok(visited.has(prefix + name), name);
+    const config = JSON.parse((await f.request(prefix + 'local-workspaces.json')).text);
+    assert.equal(localWorkspaceConfig(config, origin, prefix).current, id);
+  }
 });
 test('live HTTP gate forwards only one handoff and preserves Stop/preview across workspaces', async t => {
   const f = await fixture(t, false, mkdtempSync(join(tmpdir(), 'gateway-slot-')));
