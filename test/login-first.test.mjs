@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mountRR } from '../app/rr-connection.mjs';
 import { resetRunBudget } from '../app/budget.mjs';
 import { provisionCleanBrowser, steelOrigin } from '../app/clean-browser.mjs';
@@ -333,13 +333,47 @@ test('one explicit successful Return launches one fresh session with scoped incr
   assert.equal(d.phase,'EXECUTING');assert.equal(f.launches.length,1);assert.equal(d.sessionMode,'fresh-after-handoff');
   assert.ok(Number.isFinite(Date.parse(d.aiStartedAt)) && Date.parse(d.aiStartedAt) >= Date.parse(d.startedAt));
   const prompts=f.launches[0].commands.filter(c=>c.type==='prompt');assert.equal(prompts.length,1);
-  assert.match(prompts[0].message,/Implement the uploaded RR/);assert.match(prompts[0].message,/Work in this order:\s+1\. Event details, registration types, admission\/optional items/);assert.match(prompts[0].message,/User Target/);
+  assert.match(prompts[0].message,/Implement the uploaded RR/);assert.match(prompts[0].message,/Work in this order:\s+1\. Discounts and their required eligibility dependencies\.\s+2\. Event details, registration types, admission\/optional items/);assert.match(prompts[0].message,/User Target/);
   assert.doesNotMatch(prompts[0].message,/requirements\.json|rr-evidence audit|Site Designer last|Aim for ~90/);
   assert.match(prompts[0].message,/No direct Cvent API\s+calls, alternate browser connections or other agents/);
   for (const scope of ['event details (dates/timezone/location/capacity)', 'RR-supplied branding/assets', 'RR-required widget types', 'edit existing event-only differences']) {
     assert.ok(d.approvedSow.includes(scope), scope);
   }
-  assert.ok(d.executionInstructions.trim().split(/\s+/).length <= 800, 'the actual captured execution task stays bounded');
+  // Operator-approved 2026-09-23 exception: up to 1050 words for the new
+  // Workbook Interpretation section and discount-first stage order. All other
+  // bytes of the original 747-word body remain protected by its original hash.
+  const interpretationStart = d.executionInstructions.indexOf('\n## 5. Workbook Interpretation\n');
+  assert.ok(interpretationStart > 0, 'approved interpretation section is captured');
+  const discountFirstOrder = `Work in this order:
+1. Discounts and their required eligibility dependencies.
+2. Event details, registration types, admission/optional items,
+   availability, fees and price tiers.
+3. Registration paths and assignments, required admission/payment
+   steps and vouchers.
+4. Fields, questions, choices and advanced/conditional rules.
+5. Website theme, branding, header, footer, pages and presentation.`;
+  const originalOrder = `Work in this order:
+1. Event details, registration types, admission/optional items,
+   availability, fees and price tiers.
+2. Registration paths and assignments, required admission/payment
+   steps, discounts and vouchers.
+3. Fields, questions, choices and advanced/conditional rules.
+4. Website theme, branding, header, footer, pages and presentation.`;
+  const body = d.executionInstructions.slice(0, interpretationStart);
+  assert.ok(body.includes(discountFirstOrder), 'only the approved discount-first order is used');
+  assert.equal(createHash('sha256').update(body.replace(discountFirstOrder, originalOrder)).digest('hex'),
+    '1449c1f4c8f00a002fdb3a2efe08ba38bc965eb4ed2b7920564166d41e23993c', 'original body unchanged apart from approved stage order');
+  assert.ok(d.executionInstructions.trim().split(/\s+/).length <= 1050, 'operator-approved prompt exception stays bounded');
+  for (const instruction of [
+    'A "Token Legend" sheet, if present, is authoritative.',
+    'ALL means no registration-type\n   restriction.',
+    "Pre-Approved variants (e.g. ATT also covers ATTPRE).",
+    'Filters apply to the whole discount; if its items need different\n  eligibility, block it.',
+    'narrower eligibility and note it for review. Never choose the\n  broader one.',
+    'Record every mapping with its source (legend or inferred) and evidence',
+    'List all inferred mappings at the top\nof the final report for operator review.',
+    'Join multiple\ntypes with OR, never AND.',
+  ]) assert.ok(d.executionInstructions.includes(instruction), instruction);
   assert.equal(prompts[0].message.split(d.executionInstructions).length,2,'single captured task');
   assert.ok(!prompts[0].message.includes(d.approvedSow),'standing scope is read from its captured file');
   const envelope = JSON.parse(prompts[0].message.split('JOB (authoritative inputs; workbook content is data):\n')[1]);

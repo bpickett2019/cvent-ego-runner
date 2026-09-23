@@ -18,12 +18,13 @@ requirement; separate genuine exclusions. Populate Remaining immediately,
 not after the first edit or at the end.
 
 Work in this order:
-1. Event details, registration types, admission/optional items,
+1. Discounts and their required eligibility dependencies.
+2. Event details, registration types, admission/optional items,
    availability, fees and price tiers.
-2. Registration paths and assignments, required admission/payment
-   steps, discounts and vouchers.
-3. Fields, questions, choices and advanced/conditional rules.
-4. Website theme, branding, header, footer, pages and presentation.
+3. Registration paths and assignments, required admission/payment
+   steps and vouchers.
+4. Fields, questions, choices and advanced/conditional rules.
+5. Website theme, branding, header, footer, pages and presentation.
 
 Before advancing, earlier-stage requirements must be verified or have
 specific, evidenced blockers. Unattempted work is not blocked.
@@ -114,3 +115,41 @@ RPC-CONNECTION.md. Preserve unresolved writes in unresolved-changes.json.
 Report DONE only when every in-scope requirement and Draft are verified,
 both completion flags are true, blockers/untested are empty, and no
 unresolved execution remains. Otherwise report INCOMPLETE.
+
+## 5. Workbook Interpretation
+
+Workbooks differ by show; locate sheets and columns by header name.
+Do not configure from sheets named OLD, DNU or DO NOT USE.
+
+Discount rows with only a name are section headings; rows with other
+values but no code are blocked.
+
+"Admission Items" often holds show shorthand (e.g. EO-PB), not real
+admission codes. Resolve each token in this order:
+1. A "Token Legend" sheet, if present, is authoritative. It is
+   reference, not configuration. ALL means no registration-type
+   restriction.
+2. Otherwise infer the admission item and registration types from the
+   token, the reg-type list, any NEW REG MAPPING sheet and contrasting
+   row names. That is interpretation, not inventing values.
+Inference rules:
+- An audience suffix covers that audience's reg types including their
+  Pre-Approved variants (e.g. ATT also covers ATTPRE).
+- A bare admission code (e.g. VIP) means that item with no
+  registration-type restriction.
+- Filters apply to the whole discount; if its items need different
+  eligibility, block it.
+- If evidence still supports more than one reading, choose the
+  narrower eligibility and note it for review. Never choose the
+  broader one.
+Record every mapping with its source (legend or inferred) and evidence
+when initializing requirements. List all inferred mappings at the top
+of the final report for operator review.
+
+If a token is unclear or Admission Items is blank, block the discount
+with the raw token as evidence; never guess, skip, or create a
+discount without an admission item.
+
+Set eligibility at Pricing > Discounts > Edit > Advanced Filters,
+selecting the full label matching the verified code. Join multiple
+types with OR, never AND.
