@@ -4,7 +4,7 @@ import { CventConnection } from "../app/cvent-api.mjs";
 
 const eventId = "11111111-1111-1111-1111-111111111111", discountId = "22222222-2222-2222-2222-222222222222";
 const admissionId = "33333333-3333-3333-3333-333333333333", quantityId = "44444444-4444-4444-4444-444444444444";
-const event = { id: eventId, title: "(C+D) Test", status: "Pending" };
+const event = { id: eventId, title: "Item Test", status: "Pending" };
 const target = { apiEventId: eventId, name: event.title };
 const items = [{ id: admissionId, type: "AdmissionItem" }, { id: quantityId, type: "QuantityItem" }];
 const patch = { name: "New scoped code", active: true, stackable: false, method: { type: "BY_PERCENTAGE", value: 10 }, audienceType: "ALL", includeGuestsTowardsCapacity: false, autoApply: false, capacity: { total: 100 } };

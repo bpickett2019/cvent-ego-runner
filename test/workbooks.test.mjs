@@ -17,7 +17,9 @@ async function fixture(t) {
   const original = await readFile(path);
   let busy = false;
   const app = express(); app.use(express.json());
-  mountWorkbooks(app, { root, isBusy: () => busy });
+  // Editor-only tests inject a direct commit; controller context/serialization
+  // is exercised against the mounted production guard in reset-context.test.mjs.
+  mountWorkbooks(app, { root, isBusy: () => busy, withSave: async prepare => (await prepare())() });
   app.use((error, _req, res, _next) => res.status(409).json({ error: error.message }));
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
   t.after(async () => { await new Promise(r => server.close(r)); await rm(root, { recursive: true, force: true }); });
@@ -29,6 +31,10 @@ async function fixture(t) {
   const uploaded = await request('/api/workbooks', form); assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
   return { root, path, original, job: uploaded.body, request, busy: value => { busy = value; } };
 }
+test('workbook routes cannot be mounted without an explicit save guard', () => {
+  assert.throws(() => mountWorkbooks(express(), {root:'/unused',isBusy:()=>false}), /Context-bound workbook save guard required/);
+});
+
 test('local preview inventories sheets and paginates without a Pi session or paid prompt', async t => {
   const f = await fixture(t);
   assert.equal(f.job.rows.length, 80); assert.equal(f.job.sheets.length, 2);

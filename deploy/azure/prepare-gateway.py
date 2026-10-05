@@ -31,8 +31,9 @@ def prepare(gateway, inventory):
     (config/'known_hosts').chmod(0o644)
     app = Path('/opt/cvent-ego-gateway'); app.mkdir(mode=0o755); app.chmod(0o755)
     body = Path(gateway).read_bytes(); (app/'gateway.mjs').write_bytes(body); (app/'gateway.mjs').chmod(0o644)
-    (app/'execution-slot.mjs').write_bytes(Path(gateway).with_name('execution-slot.mjs').read_bytes())
-    (app/'execution-slot.mjs').chmod(0o644)
+    for module in ('execution-slot.mjs', 'event-safety.mjs', 'workspace-slots.mjs'):
+        (app/module).write_bytes(Path(gateway).with_name(module).read_bytes())
+        (app/module).chmod(0o644)
     slot = BASE/'execution-slot'; slot.mkdir(mode=0o700); os.chown(slot, account.pw_uid, account.pw_gid)
     expiry = (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=24)).isoformat()
     env = Path('/etc/cvent-ego-gateway.env')

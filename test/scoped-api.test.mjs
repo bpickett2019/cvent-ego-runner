@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { CventConnection, buildEventUpdate } from '../app/cvent-api.mjs';
 
 const id = '11111111-1111-1111-1111-111111111111', typeId = '22222222-2222-2222-2222-222222222222';
-const event = { id, title: '(C+D) Scoped Test', status: 'Pending', format: 'In-person', type: 'Conference', timezone: 'America/New_York', languages: ['en-US'], planners: [{ firstName: 'Planner' }], note: 'Original', start: '2030-01-01T12:00:00Z', end: '2030-01-02T12:00:00Z', closeAfter: '2030-01-01T11:00:00Z', capacity: 100, venues: [{ name: 'Original venue', address: { address1: 'Keep this street', city: 'Original city', countryCode: 'US' } }] };
+const event = { id, title: 'Scoped Test', status: 'Pending', format: 'In-person', type: 'Conference', timezone: 'America/New_York', languages: ['en-US'], planners: [{ firstName: 'Planner' }], note: 'Original', start: '2030-01-01T12:00:00Z', end: '2030-01-02T12:00:00Z', closeAfter: '2030-01-01T11:00:00Z', capacity: 100, venues: [{ name: 'Original venue', address: { address1: 'Keep this street', city: 'Original city', countryCode: 'US' } }] };
 const reg = { id: typeId, name: 'Shared name', code: 'SHARED_CODE', event: { id }, openForRegistration: true, automaticOpenDate: '2029-01-01T12:00:00Z', capacity: { total: 100, consumed: 2, remaining: 98 } };
 const feature = { type: 'Website', enabled: false, locked: false };
 const target = { apiEventId: id, name: event.title };
@@ -184,6 +184,7 @@ const timer=setTimeout;globalThis.setTimeout=(f,ms,...args)=>timer(f,Math.min(ms
 const json=v=>new Response(JSON.stringify(v),{status:200});
 globalThis.fetch=async(input,init={})=>{
  const u=new URL(input),m=init.method||'GET'; assert.equal(u.origin,'https://api-platform.cvent.com');
+ await appendFile(dir+'/requests.log',m+' '+u.pathname+'\\n');
  if(u.pathname.endsWith('/oauth2/token'))return json({access_token:'dummy',expires_in:3600});
  const s=JSON.parse(await readFile(dir+'/state.json'));
  if(m==='GET'){
@@ -215,30 +216,33 @@ globalThis.fetch=async(input,init={})=>{
   const receipts = async () => Promise.all((await readdir(join(dir, 'receipts'))).map(async file => JSON.parse(await readFile(join(dir, 'receipts', file)))));
   return { dir, run, receipts };
 }
-test('production CLI enables all scoped update families with private durable receipts and unchanged fixed target', async t => {
-  for (const [op, input] of operations) {
-    const f = await cliFixture(t), result = await f.run(op, input); assert.equal(result.code, 0, result.err);
-    const receipt = (await f.receipts())[0]; assert.equal(receipt.status, 'PASS'); assert.equal(receipt.result.verified, true);
-    assert.equal(receipt.preparedWrites.length, 1); assert.equal(receipt.writeEvidence[0].phase, 'ACKNOWLEDGED_NOT_VERIFIED');
-    assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), false);
-    assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'job.json'))).target, target);
-    const repeat = await f.run(op, input); assert.equal(repeat.code, 0, repeat.err); assert.equal(JSON.parse(repeat.out).action, 'unchanged');
-    assert.equal((await readFile(join(f.dir, 'writes.log'), 'utf8')).trim().split('\n').length, 1);
+test('RR CLI refuses non-discount families even when valid payloads and library support exist', async t => {
+  for (const [op,input] of [...operations,['updateEventBasics',{note:'Exact RR note'}]]) {
+    const f=await cliFixture(t),before=await readFile(join(f.dir,'state.json'),'utf8');
+    const result=await f.run(op,input);assert.equal(result.code,1);assert.match(result.err,/RR jobs permit only discount API writes/);
+    assert.equal(await readFile(join(f.dir,'state.json'),'utf8'),before);
+    assert.deepEqual(JSON.parse(await readFile(join(f.dir,'job.json'))).target,target);
+    for(const file of ['requests.log','writes.log','receipts','api-operation.lock','api-write-uncertain.json'])assert.equal(existsSync(join(f.dir,file)),false,file);
   }
 });
-test('production CLI holds uncertainty on failure/Stop/takeover after update, prohibits replay, never steals locks', async t => {
-  for (const mode of ['denied', 'stale', 'takeover', 'stop', 'foreign-marker']) for (const [op, input] of operations) {
-    const f = await cliFixture(t, mode), result = await f.run(op, input); assert.equal(result.code, 1, result.out);
-    assert.equal((await f.receipts())[0].status, 'UNCERTAIN'); assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), true);
-    const writes = await readFile(join(f.dir, 'writes.log'), 'utf8'); assert.equal((await f.run(op, input)).code, 1); assert.equal(await readFile(join(f.dir, 'writes.log'), 'utf8'), writes);
-    if (mode === 'foreign-marker') assert.equal(JSON.parse(await readFile(join(f.dir, 'api-write-uncertain.json'))).receiptId, 'foreign');
-  }
-  const f = await cliFixture(t); await writeFile(join(f.dir, 'api-operation.lock'), 'owned elsewhere');
-  assert.equal((await f.run(...operations[0])).code, 1); assert.equal(await readFile(join(f.dir, 'api-operation.lock'), 'utf8'), 'owned elsewhere'); assert.equal(existsSync(join(f.dir, 'writes.log')), false);
+test('a route denial preserves historical receipts and every existing uncertainty/operation marker', async t => {
+  const f=await cliFixture(t);await mkdir(join(f.dir,'receipts'));
+  await writeFile(join(f.dir,'receipts','prior.json'),'{"status":"UNCERTAIN","evidence":"retained"}');
+  const markers=['api-operation.lock','operation.lock','api-write-uncertain.json','browser-save-uncertain.json'];
+  for(const file of markers)await writeFile(join(f.dir,file),'original evidence: '+file);
+  for(const [op,input] of operations){const result=await f.run(op,input);assert.equal(result.code,1);assert.match(result.err,/RR jobs permit only discount API writes/);}
+  for(const file of markers)assert.equal(await readFile(join(f.dir,file),'utf8'),'original evidence: '+file);
+  assert.deepEqual(await f.receipts(),[{status:'UNCERTAIN',evidence:'retained'}]);
+  assert.equal(existsSync(join(f.dir,'requests.log')),false);assert.equal(existsSync(join(f.dir,'writes.log')),false);
 });
-test('production scoped writes require RR sources and AGENT ownership before intent', async t => {
-  for (const [op, input] of operations) {
-    const f = await cliFixture(t); assert.equal((await f.run(op, input, [])).code, 1); assert.equal(existsSync(join(f.dir, 'writes.log')), false); assert.equal(existsSync(join(f.dir, 'api-write-uncertain.json')), false);
-    await writeFile(join(f.dir, 'runtime.json'), JSON.stringify({ ownership: 'USER' })); assert.equal((await f.run(op, input)).code, 1); assert.equal(existsSync(join(f.dir, 'writes.log')), false);
+test('RR ownership, source references and forged job permissions do not authorize non-discount API writes', async t => {
+  const f=await cliFixture(t);
+  await writeFile(join(f.dir,'job.json'),JSON.stringify({status:'RUNNING',target,executionPolicy:'maintenance',authorizedOperations:operations.map(([op])=>op),apiWriteScope:'all'}));
+  for(const ownership of ['USER','AGENT']){
+    await writeFile(join(f.dir,'runtime.json'),JSON.stringify({ownership}));
+    for(const [op,input] of operations)for(const refs of [[],['RR!B2']]){
+      const result=await f.run(op,input,refs);assert.equal(result.code,1);assert.match(result.err,/RR jobs permit only discount API writes/);
+    }
   }
+  assert.equal(existsSync(join(f.dir,'requests.log')),false);assert.equal(existsSync(join(f.dir,'receipts')),false);
 });

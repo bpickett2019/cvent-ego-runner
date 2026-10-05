@@ -6,9 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CventConnection } from "../app/cvent-api.mjs";
 import { probeEmptyBulkJob, runBulkAccessProbe } from "../app/cvent-bulk-probe.mjs";
+import { acquireApiLease } from '../app/api-operation-lease.mjs';
 
 const eventId = "11111111-1111-1111-1111-111111111111", jobId = "22222222-2222-2222-2222-222222222222";
-const target = { apiEventId: eventId, name: "(C+D) Test" };
+const target = { apiEventId: eventId, name: "Maintenance Test" };
 const metadata = { id: jobId, url: `/events/${eventId}/discounts`, operation: "POST", status: "PENDING", totalRecords: 0, successful: 0, failed: 0 };
 function fixture({ guard = async () => {}, createStatus = 201, readStatus = 200, create = metadata, saved = metadata } = {}) {
   const requests = [];
@@ -39,6 +40,13 @@ async function probe(f, checkControl = async () => {}) {
   const result = await probeEmptyBulkJob({ api: f.api, target, checkControl, record: async row => evidence.push(row) });
   return { result, evidence };
 }
+test('bulk probe requires an explicit valid target identity regardless of naming convention', async () => {
+  for (const name of ['', ' ', null, undefined, 42, 'x'.repeat(301)]) {
+    const f=fixture();
+    await assert.rejects(probeEmptyBulkJob({api:f.api,target:{...target,name},checkControl:async()=>{},record:async()=>{}}), /selected event UUID and name/);
+    assert.equal(f.requests.length,0);
+  }
+});
 test("bulk probe creates no records, reads only its own job, and does not claim destination write access", async () => {
   const f = fixture(), { result, evidence } = await probe(f);
   assert.equal(result.bulkReadAccess, true);
@@ -87,6 +95,12 @@ test("maintenance requires explicit human confirmation; cannot be invoked by RR 
   await assert.rejects(runBulkAccessProbe({ ...f.options, env: { RR_WORKSPACE: "/job" } }), /Human maintenance/);
   assert.equal(f.requests(), undefined);
 });
+test('maintenance respects held kernel ownership without treating a released guard as a stale lock',async t=>{
+  const f=await maintenance(t),lease=acquireApiLease(join(f.root,'data/current'));
+  try{await assert.rejects(runBulkAccessProbe(f.options),/Unsettled operation/);assert.equal(f.requests(),undefined);}finally{lease.release();}
+  const result=await runBulkAccessProbe(f.options);assert.equal(result.bulkReadAccess,true);
+});
+
 test("maintenance records evidence without tokens and prevents repeated probes", async t => {
   const f = await maintenance(t);
   const result = await runBulkAccessProbe(f.options);

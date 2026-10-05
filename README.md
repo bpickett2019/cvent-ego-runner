@@ -1,86 +1,83 @@
-# Cvent RR runner — pre-release
+# Cvent RR runner — source checkpoint
 
-Upload an RR, name an existing event, log in, and let one native Pi session build and verify the permitted configuration as Draft. Pi chooses its workflow and tools, using pinned Ego + local Steel for browser automation and supported Cvent APIs when useful.
+A supervised, pre-release runner for configuring an explicitly selected unpublished Cvent event from an uploaded registration-requirements (RR) workbook.
 
-**No full RR acceptance has passed. Not approved for team/public production.** This is a trusted-local, single-operator installation, not an authenticated or multi-tenant service.
+This public checkpoint contains application source, skills, tests and reusable deployment tooling. Customer workbooks, native transcripts, browser profiles, credentials, run data, costs, private operator handoffs and one-time incident/recovery scripts are not part of the checkpoint. Source publication is not live deployment or commercial acceptance.
 
-## Use
+## Workflow
 
-1. Upload the `.xlsx`, preview/edit it, and explicitly name the target event. Originals are immutable; edits create saved versions. Workbook text cannot change the selected target.
-2. **Start Build** provisions an empty per-job Steel browser. Upload and login preparation start no Pi process or paid prompt.
-3. Log in manually, then **Return to Agent**. API access, login, event identity, ownership and safety checks must pass before one fresh Pi session starts.
-4. Pi interprets the RR, executes applicable requirements and verifies saved results. It chooses its own plan; there is no required ledger, second agent, automatic audit, retry run or paid reprompt.
-5. Inspect the result: **DONE**, **INCOMPLETE**, or **STOPPED**. Settlement and Stop shut down that job's Pi and Steel, retaining profiles and evidence.
+1. Upload an XLSX workbook, preview it and explicitly select an existing event by its exact name. Original uploads are immutable; edits create versions.
+2. Start Build provisions a fresh assigned local Steel browser. It does not launch Pi or a paid model prompt.
+3. A human signs in and explicitly returns control. Source integrity, event/API/browser identity, ownership and safety are verified before one fresh Pi session starts.
+4. One `cvent-event-build` skill and its16 references guide interpretation, registration-types-first configuration, remaining dependency-ordered work and saved verification. Clear source differences are implemented; missing essential inputs and unsupported operations block their dependents while independent work continues.
+5. Review the result: DONE, INCOMPLETE or STOPPED. Processing finished is not the same as full completion. The runner checks report consistency and safety; an agent's report is not independent commercial sign-off.
 
-**Take Control** means Stop, not pause/resume or a browser kept running for manual editing. Stop cannot retract a submitted request or roll back a save. Cleanup failures remain blockers; never clear locks/uncertainty to force another run.
+## Workspace isolation and concurrency
 
-**Clear / New RR** ends the selected context and clears the form after successful cleanup. Selecting another Excel preserves the target and old workbook until replacement succeeds; a failed upload cannot undo an already completed Stop. Active runs/unsaved edits require confirmation. Pending Start/Return must settle first; Stop stays available. Reload restores the selection, not a fresh context.
+Each workspace has its own backend, browser, job context and accounting. Coordinated `CVENT_CONCURRENT_WORKSPACES=3` configuration on the gateway and all three backends permits three different-event builds, one per workspace. The gateway reserves API-resolved event UUIDs; backends independently verify leases before paid execution. Same-event edits cannot overlap. Legacy single-slot behavior remains available only for explicitly configured compatibility/migration.
 
-Each run starts from its uploaded workbook and current saved Cvent state—not an old conversation, plan or recovery task. Historical write uncertainty does not block fresh runs; current-run uncertainty, live processes, unfinished locks, cleanup and metering failures still do. Clear/upload never resets accounting or deletes saved event configuration.
+Clear/New RR replaces only its own workspace after verified cleanup. It retains prior workbooks, saved Cvent changes, receipts, costs and genuine write-uncertainty evidence. Scoped uncertainty blocks its event; unknown scope or unavailable peer safety proof still fails closed. Stop cannot undo submitted changes, and stopped jobs do not resume.
 
-## Scope and safety
+Take Control attempts a verified safe pause of the same Pi/browser session. Return rechecks identity and safety. Known in-flight tools can refuse pause before cancellation; unsafe or uncertain interruptions require Stop and reconciliation. Settled model-request errors may retain a proven-safe pause; there is no automatic paid rerun.
 
-- The standing scope is [app/standing-sow.md](app/standing-sow.md), distilled from the user's SOW with later delivery changes. Configure applicable RR requirements and necessary dependencies: event details, supplied branding/assets, website/theme/header/footer/widgets, registration, admissions, pricing, paths, optional items, vouchers and advanced rules. No default category/widget work or prescribed editor order.
-- Create or modify existing **event-only** objects/settings/relationships, including admissions and ordinary event prices. Keep the selected event's name/identity fixed and leave it unpublished as Draft.
-- Protect existing shared/account-wide definitions. Reuse exact matches; separate shared creation requires proven isolation and tool support. Event URLs/new templates alone do not prove scope. No isolated shared-create API is currently established.
-- Preserve RR names, codes and values exactly. No invented defaults/suffixes, duplicate workarounds, unverified writes or bypassing explicit API/tool denials. Missing capability is not broader permission.
-- Never delete/archive anything—including widgets, links or newly created objects—or publish, send communications, access attendees, configure sessions/speakers, change another event, administer accounts, provision payment accounts, or change credentials/integration identifiers. Shared payment/tax/currency settings remain unchanged.
-- Login and incident attestations are human-only. No cookies/storage, hidden credentials, raw credential-bearing network content or secret exposure. Use only the assigned local Steel runtime, not Steel Cloud or unrelated browsers.
-- A known pre-execution gap blocks dependent work only. Uncertain execution/save, crash/disconnect, identity/ownership loss, expired login, exposed secrets and operator Stop stop the whole run. Never replay uncertain writes or bypass failed API writes through UI.
+Concurrent mode disables shared contact-type creation: reuse exact existing definitions and report missing types for operator provisioning outside overlapping builds. Event-local registration configuration remains separate from shared definitions and attendee records.
 
-These are instructions plus concrete guards, **not an arbitrary-shell/browser-object security sandbox**. Full executable SOW coverage and shared-object isolation remain unproven.
+The authenticated staging gateway's shared login is not per-person authorization or hostile multi-tenant isolation. The core service remains trusted-local. Never expose the core app, Steel, CDP or Docker directly, weaken authentication, or replay deployment scripts to work around an ownership/safety refusal.
 
-## Delivery scope
+## Tools and boundaries
 
-Keep workbook uploads and one native executor. Structured intake/no-chat, operator template cloning, Azure/M365 deployment/review/Outlook/triage, the original $30 ceiling/$9–12 estimate, retry-from-failed-step, and separate guardrail/audit-trail/reference-event-acceptance deliverables are excluded. This does not remove existing safety protections, saved-result verification or cost tracking. RR-required event details, supplied branding/assets and widget types remain in scope; no all-widget default checklist.
+- One Pi process/session and one assigned Ego/local Steel browser per build; no additional review agent or wrapper-driven reprompt.
+- The native launcher explicitly loads only `.pi/skills/cvent-event-build/SKILL.md`, excluding unrelated/global skills and development context files.
+- The guarded API executable authorizes discount/volume-discount writes and supported dependency reads. Broader library methods are not RR tool permissions. Other authorized configuration uses the assigned browser.
+- No publishing, attendee creation/access, communications, payments, session/speaker authoring, arbitrary account administration, deletion/archive, event retargeting or bypass of tool denials.
+- Human login and incident attestations remain human actions. Do not extract cookies or credentials.
+- Missing business values are not guessed. Names, codes, display text, formulas, comments and field-specific blank conventions retain source-backed meaning. Optional unrequested settings are preserved and disclosed, not fabricated requirements or completed-work credit.
+- Genuine uncertain writes, identity/control loss, cleanup failure and unknown spending remain safety stops. A note in a report cannot clear them.
 
-## Results and accounting
+These instructions and guards are not an arbitrary-shell security sandbox.
 
-DONE requires every applicable SOW requirement implemented, connected, verified and saved as Draft. Missing/blocked/unverified in-scope work is INCOMPLETE; interruptions and failed cleanup are STOPPED. Unrelated RR requests and whole-project deliverables are reported separately as exclusions, never used to disguise an in-scope blocker.
+## Results and costs
 
-Pi writes the saved-result report; the wrapper checks its structure and safety state, not semantic RR completeness. See [RPC-CONNECTION.md](RPC-CONNECTION.md) for the exact result contract. No normal native exit alone proves DONE.
+The existing UI distinguishes verified completion, finished processing with unfinished items, and stopped execution. It currently exposes detailed requirement evidence; the proposed natural-language results redesign is **not included** in this checkpoint.
 
-There is no model-facing time target or prescribed execution sequence. The dashboard clock uses the existing `aiStartedAt` timestamp, excluding human login/setup, and freezes at settlement. Older records without an AI timestamp retain a labelled setup-inclusive duration; history is not rewritten. Supported event-only differences must lead to edits, not comparison-only reports or duplicate creations. Workbook utilities and save helpers are optional. Pi chooses how to inspect, configure and verify; there is no API-first routing rule.
+Native costs are sampled and retained per run and historically. Automatic dollar limits are disabled. Legacy allowance/reserve fields and time/cost targets are metadata, not enforced caps. Native Pi/provider retries and compaction may consume tokens. Multiple simultaneous builds incur independent charges; hosting and delayed external usage are not a complete part of the model meter.
 
-Per-run and historical native costs remain tracked, sampled every two seconds and settled on Stop. **Automatic dollar thresholds are removed and the authorized app restart is verified; see CURRENT in MVP-HANDOFF.md.** Unknown/lost metering still stops. Legacy allowance/reserve fields are metadata; external charges and delayed provider usage are not a complete billing meter. No completed-RR price/latency guarantee exists.
+## Prerequisites and checks
 
-Only an explicitly authorized operator maintenance reset may credit captured historical costs. It requires stopped/settled execution, retains costs and immutable reset evidence, does not refund charges, and does not resolve uncertain saves. Clear/New RR never resets billing.
+This is **not a validated clean-clone deployment recipe**. It requires:
 
-## Installation and checks
+- Node24+ (validated backend environment: Node25), Python3 with `openpyxl==3.1.5`, Docker and native Pi.
+- The externally installed Cvent clients selected by `CVENT_AGENT_ROOT` and `CVENT_UI_AUTOMATION_ROOT` (see `app/cvent-api.mjs`).
+- Ego pinned at `dca7003349c5f7132189ba00547cbbd7ff8e597e`, its built assets, and `ego-bridge/patches/steel-session-ledger.patch`. Preserve the intentional patch; do not reset the vendor checkout.
+- The pinned local Steel image and approved private configuration for the Cvent API and Pi/provider/model/pricing. Do not put secrets in Git or assume credential presence proves live access.
 
-This is **not a validated clean-clone deployment recipe**. Required locally:
-
-- Node 24+ (tested on 25), Python 3 + `openpyxl==3.1.5`, Docker, native Pi with configured authentication/model/pricing.
-- Existing clients/dependencies in `~/cvent-agent` and `~/cvent-ui-automation`, or absolute `CVENT_AGENT_ROOT` / `CVENT_UI_AUTOMATION_ROOT` overrides. They are external prerequisites, not downloaded by this project.
-- Ego pinned at `dca7003349c5f7132189ba00547cbbd7ff8e597e`, built assets and `ego-bridge/patches/steel-session-ledger.patch`. Do not reset the intentional dirty vendor checkout. See the [Steel bridge guide](.pi/skills/ego-browser/references/steel-bridge.md).
-- The existing local image pinned in `app/clean-browser.mjs`. `docker-compose.yml` describes the historical shared browser, not current per-build provisioning.
-- Externally provisioned Cvent credentials (`CVENT_CREDENTIALS_FILE`, owner-readable only), `PI_PROVIDER`, `PI_MODEL`, and private bootstrap state. No secrets in Git.
-
-On a **new host only**, install Node dependencies with `npm ci` and Python dependencies with `python3 -m pip install -r requirements.txt`, then provision the prerequisites above. Check locally:
+On a newly provisioned development host, install the declared Node/Python dependencies and the external prerequisites before using the checks:
 
 ```sh
-npm test                    # offline fixtures; external fetch denied
-npm run check:installation  # prerequisite presence, not live authentication/acceptance
-npm run check:repository    # indexed artifact paths, not secret/content/history scanning
+npm test
+npm run check:repository
+npm run check:installation
+python3 -m unittest discover -s deploy/azure -p 'test_*.py'
 ```
 
-The installation check does not prove Docker/image readiness, provider pricing/authentication, credentials, or vendor patch/build equivalence. `test/live-*` scripts are excluded from `npm test` and require separate review/authorization.
+`npm test` uses an offline network guard. One historical test requires private `data/current/rr-plan.json`, intentionally absent from this public checkpoint; the missing fixture is reported rather than replaced with customer data or silently skipped. Fixture tests do not prove full live RR completion, browser/SSO reliability, all template variants or production acceptance. Live test scripts require separate review and explicit authorization.
 
-Start with `PORT=8788 npm start` **only after verifying exclusive ownership and authorizing startup/restart**. Never start a second server or steal a stale lock. Preserve the existing credential/model environment in memory during maintenance. The listener is loopback-only (CLI default 8787); Host/Origin checks are not authentication. Other local users/processes can access customer data. Never expose the app through a public listener, tunnel or reverse proxy; Steel ports/viewer are trusted-local surfaces too.
+Starting/restarting a service, launching an assigned browser, applying a deployment or making a paid request requires current activity/ownership checks and appropriate authorization. Do not steal a stale lock or modify files underneath an active run. The reusable deployment preparation copies the gateway's required modules, but coordinated configuration and quiescent activation are still operator responsibilities.
 
-## Development and release
+## Known limits
 
-Keep changes surgical: state assumptions, remove actual duplication, preserve behavior, run focused checks, and report evidence/limits. Do not add abstractions, fallback modes or workflow stages for hypothetical needs. The short task in `app/native-task.md` and standing scope in `app/standing-sow.md` are captured separately for each new job. The sole prompt points Pi to that job's scope and workbook; development docs are not injected into Pi. `app/runner-prompt.md` is the frozen pre-simplification task, retained as historical source; the active native-Pi launcher does not load it.
+Dedicated asset metadata fields and voucher/rule switches are pending intake work. Image upload is currently human-owned. Discount-date clearing and registration-type Advanced Filters are not supported by the current adapter. Safe preview coverage, Save-observer recovery, SSO lifetime, shared-definition provisioning and representative multi-build saved-result acceptance remain separate concerns; source tests and capacity configuration do not resolve them automatically.
 
-Read [MVP-HANDOFF.md](MVP-HANDOFF.md) **CURRENT** before continuing. Preserve existing uncommitted work, pinned vendor modifications, workbooks, profiles, costs and receipts. Paid runs, live mutations, browser launches, restarts, resets and commit/push each need separate authorization. Never execute the prohibited MOCK_ONLY workbook identified in the handoff.
+## Source reference map
 
-Private source repository: https://github.com/bpickett2019/cvent-ego-runner. Source checkpoints are not releases or deployment acceptance. Before an authorized commit/push, verify destination/privacy, inspect individual changes and staged content (including vendor), run relevant checks, and stage only reviewed source paths—never blanket `git add -A` or force-add private artifacts. `data/`, `logs/`, workbooks, credentials and native sessions stay private. Raw progress is retained locally but not downloadable over HTTP; allowlisted SSE metadata excludes native payloads. Reports/replies/job state still contain private customer data, not generally sanitized output.
+- `.pi/skills/cvent-event-build/`: the active skill and its self-contained reference graph.
+- `RPC-CONNECTION.md`: job lifecycle, pause/Return, results and cleanup contracts.
+- `CVENT-API.md` / `CVENT-API-COVERAGE.md`: executable API authorizations and limitations.
+- `app/rr-connection.mjs`: controller and canonical job/workbook-generation handling.
+- `app/shared-event-safety.mjs`: backend event-safety enforcement.
+- `deploy/azure/workspace-slots.mjs`: concurrent workspace/event reservations.
+- `deploy/azure/gateway.mjs`: authenticated, expiring gateway and upstream routing.
+- `public/`: existing operator UI and result/readiness presentation.
+- `test/`: synthetic offline regression coverage, not customer execution evidence.
 
-## Reference map
-
-- [MVP-HANDOFF.md](MVP-HANDOFF.md): current evidence, activation, protected resources and next decision.
-- [RPC-CONNECTION.md](RPC-CONNECTION.md): lifecycle, endpoints, completion and cleanup contract.
-- [CVENT-API.md](CVENT-API.md) / [CVENT-API-COVERAGE.md](CVENT-API-COVERAGE.md): exact supported operations, scopes and gaps.
-- [RR-EVIDENCE.md](RR-EVIDENCE.md): optional cached extraction/comparison tools; original-workbook inspection remains necessary for uncaptured visual/formula semantics.
-- [E2E-ACCEPTANCE.md](E2E-ACCEPTANCE.md): verification status, not a formal acceptance deliverable; local tests are not live proof.
-- [Historical notes](docs/history/README.md): superseded milestones and evidence pointers, not current instructions.
+Private deployment handoffs and receipt locations referenced by historical operator documentation are deliberately not newly published. Consult the authorized operator for live state; Git HEAD is not a deployment manifest. Preserve private evidence and review individual paths/content before future commits—never blanket-stage runtime artifacts.

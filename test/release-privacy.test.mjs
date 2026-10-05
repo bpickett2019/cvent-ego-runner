@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { publicEvent } from '../app/public-events.mjs';
+import { publicEvent, nativeModelFailure } from '../app/public-events.mjs';
 import { privateArtifact, checkRepository } from '../scripts/check-repository.mjs';
 
 const privatePaths = ['data/current/state.json', 'data/browser-profiles/id/Default/Cookies', 'data/workbooks/id/version.xlsx', 'logs/nested/receipt.json', 'original.xlsx', 'export.csv', '.env.local', 'config/production.env', 'auth.json', 'capture.har', 'native.jsonl', '.pi/sessions/run.json'];
@@ -23,6 +23,17 @@ test('private runtime trees and portable sensitive files are ignored, source rem
   writeFileSync(join(root, 'auth.json'), '{}');
   execFileSync('git', ['add', '-f', 'auth.json'], { cwd: root });
   assert.deepEqual(checkRepository(root), ['auth.json'], 'force-staged ignored secrets still block the path gate');
+});
+test('model failure projection uses only fixed categories and text', () => {
+  for (const message of [null, {}, {role:'user',stopReason:'error'}, {role:'toolResult',stopReason:'error'},
+    ...['pending','stop','toolUse','length','deferred'].map(stopReason=>({role:'assistant',stopReason}))]) {
+    assert.equal(nativeModelFailure(message),null);
+  }
+  const unknown=nativeModelFailure({role:'assistant',stopReason:'error',errorMessage:'PRIVATE_KEY',diagnostics:{private:'PRIVATE_KEY'}});
+  assert.deepEqual(unknown,{category:'MODEL_REQUEST_FAILED',message:'Native model request failed.'});
+  const transport=nativeModelFailure({role:'assistant',stopReason:'error',diagnostics:[null,{type:'provider_transport_failure',error:'PRIVATE_KEY'}]});
+  assert.deepEqual(transport,{category:'MODEL_TRANSPORT_FAILED',message:'Native model request failed with a transport error.'});
+  assert.deepEqual(nativeModelFailure({role:'assistant',stopReason:'error',errorMessage:'WebSocket error'}),transport);
 });
 test('activity projection excludes all native payloads, reasoning and unknown events', () => {
   for (const type of ['response', 'message_update', 'message_end', 'tool_execution_update', 'extension_ui_request', 'new_future_event']) {

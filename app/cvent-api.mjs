@@ -92,8 +92,8 @@ export function buildEventUpdate(event, changes) {
   if (!changes || typeof changes !== "object" || Array.isArray(changes) || !Object.keys(changes).length || Object.keys(changes).some(key => !EVENT_FIELDS.has(key))) throw new ApiFailure("Event changes contain unsupported or prohibited fields");
   const readOnly = ["id", "code", "virtual", "launchAfter", "phone", "defaultLocale", "currency", "registrationSecurityLevel", "status", "eventStatus", "planningStatus", "testMode", "stakeholders", "customFields", "category", "_links", "created", "createdBy", "meetingRequestId", ...AUDIT_FIELDS];
   if (Object.keys(event).some(key => ![...EVENT_FIELDS, ...PRESERVE_ONLY_FIELDS, ...readOnly].includes(key))) throw new ApiFailure("Unreviewed event baseline field; refusing potentially lossy PUT");
-  // Retain the installed configuration client's explicit safety restrictions.
-  if (typeof event.title !== "string" || !event.title.startsWith("(C+D)")) throw new ApiFailure("Installed event PUT client permits only (C+D) events; no browser bypass");
+  // Preserve the verified existing title; naming conventions are not authorization.
+  if (typeof event.title !== "string" || !event.title.trim()) throw new ApiFailure("Fresh event baseline requires an existing nonempty title");
   if (Object.hasOwn(changes, "title") && changes.title !== event.title) throw new ApiFailure("Installed event PUT client requires the existing event title");
   for (const key of ["planners", "languages", "type"]) if (Object.hasOwn(changes, key) && !isDeepStrictEqual(changes[key], event[key])) throw new ApiFailure(`Changing ${key} may replace definitions/collections; not supported`);
   for (const key of ["description", "note"]) if (Object.hasOwn(changes, key)) text(changes[key], key === "note" ? 300 : 20000);
@@ -388,7 +388,6 @@ export class CventConnection {
     return { event, client, receipt: { route: "api", eventId: event.id, name: target.name, status: event.status, verifiedAt: new Date().toISOString() } };
   }
   async configureDiscount(target, event, input, beforeWrite, recordEvidence, kind = "DISCOUNT_CODE") {
-    if (!event.title?.startsWith("(C+D)")) throw new ApiFailure("Discount writes require the existing (C+D) event guard; no browser bypass");
     const volume = kind === "VOLUME_DISCOUNT", identityKey = volume ? "name" : "code";
     const identity = input?.[identityKey], fields = volume ? VOLUME_PATCH_FIELDS : DISCOUNT_PATCH_FIELDS;
     const match = rows => discountMatch(rows, identity, kind);
@@ -630,7 +629,6 @@ export class CventConnection {
       return operation === "getEvent" ? event : this.readCollection(target.apiEventId, operation, null, operation === "listQuestionChoices" ? input.questionId : null);
     }
     const { event, client } = await this.assertTarget(target);
-    if (!event.title?.startsWith("(C+D)")) throw new ApiFailure("Writes require the retained (C+D) event guard; no bypass");
     if (operation === "configureDiscount" || operation === "configureVolumeDiscount") return this.configureDiscount(target, event, input, beforeWrite, recordEvidence, operation === "configureVolumeDiscount" ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE");
     const id = target.apiEventId;
     if (operation === "updateEvent" || operation === "updateEventBasics") {

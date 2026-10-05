@@ -79,6 +79,27 @@ class DeploymentTests(unittest.TestCase):
             selected = {str(p.relative_to(root)) for p in bundle.source_files(root)}
             self.assertEqual(selected, set(bundle.FILES))
 
+    def test_snapshot_includes_only_reviewed_skill_pack_and_no_active_sow(self):
+        root = HERE.parent.parent
+        selected = {str(p.relative_to(root)) for p in bundle.source_files(root)}
+        names = {'cvent-event-build'}
+        self.assertEqual({p.split('/')[2] for p in selected if p.startswith('.pi/skills/')}, names)
+        for name in names:
+            self.assertIn(f'.pi/skills/{name}/SKILL.md', selected)
+        for reference in ['runner-contract.md', 'rr-interpretation.md', 'operating-model.md', 'runner-integration.md',
+                          'scope-and-intake.md', 'assets.md', 'discounts.md', 'registration-and-pricing.md',
+                          'website-and-fields.md', 'vouchers-and-rules.md', 'verification.md',
+                          'browser/controls.md', 'browser/references/steel-bridge.md', 'browser/references/api.md']:
+            self.assertIn('.pi/skills/cvent-event-build/references/' + reference, selected)
+        self.assertEqual([p for p in selected if p.endswith('/SKILL.md')], ['.pi/skills/cvent-event-build/SKILL.md'])
+        self.assertNotIn('app/standing-sow.md', selected)
+        self.assertNotIn('docs/history/standing-sow.md', selected)
+        self.assertIn('app/api-operation-lease.mjs', selected)
+        self.assertIn('app/api-flock.py', selected)
+        self.assertIn('app/write-uncertainty.mjs', selected)
+        self.assertIn('app/shared-event-safety.mjs', selected)
+        self.assertFalse(any(p.startswith('test/') for p in selected))
+
     def test_listener_gate_accepts_only_expected_services(self):
         for address, owner in [('0.0.0.0:22', 'sshd'), ('127.0.0.53%lo:53', 'systemd-resolve'), ('127.0.0.1:34583', 'containerd')]:
             self.assertTrue(verify.allowed_listener(f'LISTEN 0 4096 {address} 0.0.0.0:* users:(("{owner}",pid=5,fd=3))'))

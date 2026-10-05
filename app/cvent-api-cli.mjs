@@ -1,13 +1,23 @@
-import { readFile, writeFile, rename, mkdir, open } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { CAPABILITIES, BLOCKED_OPERATIONS, CventConnection, ApiFailure } from "./cvent-api.mjs";
 import { runBulkAccessProbe } from "./cvent-bulk-probe.mjs";
+import { acquireApiLease, ApiOperationLeaseError, API_LOCK_PROTOCOL } from "./api-operation-lease.mjs";
 
-const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name]) => !Object.hasOwn(BLOCKED_OPERATIONS, name)));
-const blockedOperations = BLOCKED_OPERATIONS;
+// This executable is the RR job boundary, not the full library capability map.
+// New library writes stay denied unless explicitly included in this route policy.
+// No job field, workbook value, environment flag or CLI override can widen it.
+const rrWrites = new Set(["configureDiscount", "configureVolumeDiscount"]);
+const blockedOperations = Object.freeze({
+  ...Object.fromEntries(Object.entries(CAPABILITIES)
+    .filter(([name, mode]) => mode !== "api-read" && !rrWrites.has(name))
+    .map(([name]) => [name, "RR jobs permit only discount API writes; other authorized configuration uses the assigned Ego/Steel browser. No API request was sent."])),
+  ...BLOCKED_OPERATIONS,
+});
+const operations = Object.fromEntries(Object.entries(CAPABILITIES).filter(([name]) => !Object.hasOwn(blockedOperations, name)));
 const read = async path => JSON.parse(await readFile(path, "utf8"));
 async function save(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -22,14 +32,10 @@ async function main() {
     return;
   }
   if (operation === "capabilities") {
-    console.log(JSON.stringify({ operations, blockedOperations, maintenanceOperations: { probeBulkAccess: { mode: "human-only-empty-job-access-check", confirmation: "--confirm-empty-job", limitation: "No records, run, cancellation or event writes. Actual bulk execution is not exposed." } }, writeCapabilities: {
-      updateEvent: { mode: "event-only-update", supports: ["description/note, dates/deadline, timezone, format, capacity, merged single venue, visibility"], limitations: ["fixed name; unchanged planners/languages/type/archive schedule"] },
-      updateEventBasics: { aliasOf: "updateEvent" },
-      updateRegistrationType: { mode: "event-only-update", supports: ["availability, opening/closing dates, capacity"], limitations: ["no shared name/code/description or contact-type definition edits"] },
-      enableEventFeature: { mode: "event-only-enable", supports: ["Website", "Registration"], limitations: ["preserve tier/config; no disable, payment changes or launch"] },
+    console.log(JSON.stringify({ operations, blockedOperations, locking: { protocol: API_LOCK_PROTOCOL, requiresCompatibleJob: true }, maintenanceOperations: { probeBulkAccess: { mode: "human-only-empty-job-access-check", confirmation: "--confirm-empty-job", limitation: "No records, run, cancellation or event writes. Actual bulk execution is not exposed." } }, writeCapabilities: {
       configureDiscount: { mode: "event-only-create-or-update", supports: ["final-total and item-scoped codes", "existing event-level values and additive AdmissionItem/QuantityItem links"], limitations: ["no link removal; exact code; 1–100 scoped items"] },
       configureVolumeDiscount: { mode: "event-only-create-or-update", supports: ["named volume rules and additive scoped links"], limitations: ["no link removal; exact name; explicit threshold semantics"] }
-    }, preservation: "Fixed selected event/name and Draft; no deletion/archive, shared edits, other-event effects, communications or attendee access. Shared creation requires documented isolation; no isolated shared create route established in this adapter.", browser: "Documented coverage gaps only; never bypass failed/denied/uncertain API operations", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
+    }, preservation: "Fixed selected event/name and Draft; no deletion/archive, shared edits, other-event effects, communications or attendee access. Shared creation requires documented isolation; no isolated shared create route established in this adapter.", browser: "Assigned Ego/Steel for authorized non-discount configuration; never bypass uncertainty or protected-operation denials", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
     return;
   }
   if (Object.hasOwn(blockedOperations, operation)) throw new ApiFailure(blockedOperations[operation]);
@@ -38,6 +44,7 @@ async function main() {
   const workspace = resolve(process.env.RR_WORKSPACE), runtimePath = join(workspace, "runtime.json");
   const job = await read(join(workspace, "job.json"));
   if (job.status !== "RUNNING" || !job.target?.apiEventId) throw new ApiFailure("Job is not running with a confirmed API event identity");
+  if (job.apiOperationLocking !== API_LOCK_PROTOCOL) throw new ApiFailure("Job lacks compatible API ownership checks; use a fresh upload after coordinated runner activation. No API request was sent.");
   const runtime = await read(runtimePath);
   if (runtime.ownership !== "AGENT") throw new ApiFailure("Browser/execution control belongs to the user; API execution stopped");
   const uncertainPath = join(workspace, "api-write-uncertain.json");
@@ -53,20 +60,24 @@ async function main() {
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
   const receiptId = randomUUID(), receiptPath = join(workspace, "receipts", `api-${receiptId}.json`);
   await mkdir(join(workspace, "receipts"), { recursive: true, mode: 0o700 });
-  // One API command at a time. A stale lock is evidence, not permission to steal it.
-  const lockPath = join(workspace, "api-operation.lock");
-  const lock = await open(lockPath, "wx", 0o600);
-  await lock.writeFile(JSON.stringify({ pid: process.pid, operation, receiptId }));
+  // Kernel ownership is separate from durable read/write evidence. The guard
+  // inode persists; neither normal release nor forced death deletes any marker.
   let dispatched = false;
-  const receipt = { receiptId, operation, route: "api", eventId: job.target.apiEventId, rrReferences: input.rrReferences || [], startedAt: new Date().toISOString() };
+  const receipt = { receiptId, operation, route: "api", eventId: job.target.apiEventId, rrReferences: input.rrReferences || [], startedAt: new Date().toISOString(),
+    access: CAPABILITIES[operation], ownership: { mechanism: API_LOCK_PROTOCOL, pid: process.pid, jobId: job.id ?? null, runtimeId: runtime.runtimeId ?? null, sessionId: job.sessionId ?? null } };
+  const lease = acquireApiLease(workspace);
   try {
     const checkControl = async () => {
+      lease.assertOwned();
       if (CAPABILITIES[operation] === "api-write" && existsSync(join(workspace, "browser-save-uncertain.json"))) throw new ApiFailure("Browser save uncertainty blocks API mutation");
       const latestJob = await read(join(workspace, "job.json")), latest = await read(runtimePath);
       const uncertainty = existsSync(uncertainPath) ? await read(uncertainPath) : null;
       const ownIntent = uncertainty?.receiptId === receiptId && uncertainty?.eventId === job.target.apiEventId && uncertainty?.operation === operation;
-      if (latestJob.status !== "RUNNING" || !isDeepStrictEqual(latestJob.target, job.target) || latest.ownership !== "AGENT" || latest.runtimeId !== runtime.runtimeId || latest.activeTargetId !== runtime.activeTargetId || latest.steelSessionId !== runtime.steelSessionId || (dispatched ? !ownIntent : CAPABILITIES[operation] === "api-write" && uncertainty !== null)) throw new ApiFailure("Stop, takeover or unresolved API write blocks this mutation");
+      if (latestJob.status !== "RUNNING" || latestJob.apiOperationLocking !== API_LOCK_PROTOCOL || !isDeepStrictEqual(latestJob.target, job.target) || latest.ownership !== "AGENT" || latest.runtimeId !== runtime.runtimeId || latest.activeTargetId !== runtime.activeTargetId || latest.steelSessionId !== runtime.steelSessionId || (dispatched ? !ownIntent : CAPABILITIES[operation] === "api-write" && uncertainty !== null)) throw new ApiFailure("Stop, takeover or unresolved API write blocks this mutation");
+      lease.assertOwned();
     };
+    await checkControl(); // Revalidate after acquisition; a late command cannot cross Stop.
+    await save(receiptPath, { ...receipt, status: CAPABILITIES[operation] === "api-read" ? "READ_STARTED" : "CHECKING" });
     const api = new CventConnection({ mutationGuard: async () => { if (!dispatched) throw new ApiFailure("Mutation requires durable intent"); await checkControl(); } });
     const target = { ...job.target };
     const data = structuredClone(input.data ?? input);
@@ -95,13 +106,7 @@ async function main() {
         prepared.phase === "UPDATE_DISCOUNT" && prepared.path === `${root}/${prepared.discountId}` ||
         prepared.phase === "ADD_DISCOUNT_ITEM" && data.agendaItems?.some(item => isDeepStrictEqual(item, prepared.agendaItem)) && prepared.path === `${root}/${prepared.discountId}/agenda-items/${prepared.agendaItem.id}`
       );
-      const eventRoot = `/events/${job.target.apiEventId}`;
-      const scopedUpdate = !dispatched && prepared?.method === "PUT" && (
-        ["updateEvent", "updateEventBasics"].includes(operation) && prepared.phase === "UPDATE_EVENT" && prepared.path === eventRoot && prepared.baseline?.id === job.target.apiEventId && prepared.body?.title === prepared.baseline.title && prepared.baseline.title === job.target.name ||
-        operation === "updateRegistrationType" && prepared.phase === "UPDATE_REGISTRATION_TYPE" && prepared.path === `${eventRoot}/registration-types/${data.registrationTypeId}` && prepared.baseline?.id === data.registrationTypeId && prepared.body?.id === data.registrationTypeId ||
-        operation === "enableEventFeature" && prepared.phase === "ENABLE_EVENT_FEATURE" && ["Website", "Registration"].includes(data.type) && prepared.path === `${eventRoot}/features/${data.type}` && prepared.baseline?.type === data.type && prepared.body?.enabled === true
-      );
-      if (!(create || link || finalize || existingDiscount || scopedUpdate) || sentPaths.has(`${prepared.method} ${prepared.path}`)) throw new ApiFailure("Prepared write is outside the scoped operation or was already dispatched; no replay");
+      if (!(discountOperation && (create || link || finalize || existingDiscount)) || sentPaths.has(`${prepared.method} ${prepared.path}`)) throw new ApiFailure("Prepared write is outside the scoped operation or was already dispatched; no replay");
       if (!Array.isArray(input.rrReferences) || !input.rrReferences.length || !input.rrReferences.every(value => typeof value === "string" && value.trim())) throw new ApiFailure("API writes require RR source references");
       await checkControl();
       sentPaths.add(`${prepared.method} ${prepared.path}`);
@@ -137,12 +142,10 @@ async function main() {
     await save(receiptPath, { ...receipt, status: dispatched ? "UNCERTAIN" : "BLOCKED", message: error instanceof ApiFailure ? error.message : "Cvent API operation failed; inspect the receipt and reconcile before further writes", httpStatus: error.status ?? null, diagnostic: error instanceof ApiFailure ? error.diagnostic : undefined });
     throw error;
   } finally {
-    await lock.close();
-    const { unlink } = await import("node:fs/promises");
-    await unlink(lockPath);
+    lease.release(); // Closes only our descriptor; never unlinks a guard or uncertainty.
   }
 }
 main().catch(error => {
-  console.error(JSON.stringify({ error: error instanceof ApiFailure ? error.message : "Cvent API command failed; do not blindly retry or bypass through the browser", httpStatus: error.status ?? null }));
+  console.error(JSON.stringify({ error: error instanceof ApiFailure || error instanceof ApiOperationLeaseError ? error.message : "Cvent API command failed; do not blindly retry or bypass through the browser", httpStatus: error.status ?? null }));
   process.exitCode = 1;
 });

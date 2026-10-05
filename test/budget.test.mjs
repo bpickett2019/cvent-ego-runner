@@ -32,13 +32,14 @@ test('authorized reset preserves historical records/evidence and credits only ca
   assert.notEqual(reset.resetId, again.resetId);
   assert.ok(readFileSync(join(f.root, `budget-reset-${reset.resetId}.json`)).length);
 });
-test('historical write evidence is retained without gating new RRs; cleanup and locks still gate', t => {
+test('accounting reset never clears same-event write uncertainty; cleanup and locks still gate', t => {
   const f = fixture(t); resetRunBudget(f.jobs, 'Authorized accounting-only reset');
   const marker = join(f.jobs, 'old/unresolved-changes.json');
   writeFileSync(marker, JSON.stringify({ changes: [{ state: 'unknown' }] }));
-  assert.equal(f.history().priorEventCostUSD, 0); assert.ok(readFileSync(marker).length);
+  assert.throws(f.history, /reconciliation/); assert.ok(readFileSync(marker).length);
+  rmSync(marker); // Owned synthetic fixture only; exercise independent record holds.
   for (const patch of [{ unresolvedChanges: ['save'] }, { apiUnresolved: true }]) {
-    f.save({ ...f.record, ...patch }); assert.equal(f.history().priorEventCostUSD, 0);
+    f.save({ ...f.record, ...patch }); assert.throws(f.history, /reconciliation/);
   }
   f.save({ ...f.record, stopFailures: ['cleanup failed'] }); assert.throws(f.history, /cleanup/);
   f.save(f.record);

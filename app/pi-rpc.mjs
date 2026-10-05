@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { RUN_SKILLS } from "./run-policy.mjs";
 
 // Transport only: Pi owns reasoning, tools, sessions, retries, and cancellation.
 export class PiRpc extends EventEmitter {
@@ -9,17 +10,16 @@ export class PiRpc extends EventEmitter {
     super();
     this.pending = new Map();
     this.closed = false;
-    // Load the exact skill exercised against this bridge, not a same-name global
-    // skill with a different API. Keep native tools and extensions unchanged.
-    // Exclude development policies; the single job prompt carries the approved SOW.
-    // Keep Pi's built-in system prompt, tools and compaction unmodified.
+    // Advertise the single event-build skill. Its bundled references include
+    // the pinned Ego/Steel controls; native Pi reads relevant guidance on demand.
+    // Exclude development context; keep native tools, extensions and compaction.
     const thinking = env.PI_THINKING_LEVEL ?? "high";
     if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinking)) {
       throw new Error("Invalid PI_THINKING_LEVEL; native execution was not started");
     }
     const args = ["--mode", "rpc", "--approve", "--session-dir", `${workspace}/pi-sessions`, "--thinking", thinking,
       "--no-context-files",
-      "--no-skills", "--skill", join(cwd, ".pi/skills/ego-browser/SKILL.md")];
+      "--no-skills", ...RUN_SKILLS.flatMap(name => ["--skill", join(cwd, ".pi/skills", name, "SKILL.md")])];
     if (!env.PI_PROVIDER || !env.PI_MODEL) throw new Error("Launch from the working Pi environment (PI_PROVIDER and PI_MODEL required)");
     args.push("--provider", env.PI_PROVIDER, "--model", env.PI_MODEL);
     this.child = spawnProcess("pi", args, {
@@ -86,7 +86,26 @@ export class PiRpc extends EventEmitter {
     if (stats?.cost !== 0) throw new Error("Fresh session has prior or unavailable spending; refusing context reuse");
     return next;
   }
-  async stop(afterAbort = async () => {}) {
+  // Pi owns cancellation/idle state. Callers must revoke tool ownership first;
+  // native idle does not prove remote writes or spending have been reconciled.
+  async pause(sessionId) {
+    if (typeof sessionId !== "string" || !sessionId) throw new Error("Expected native session identity required for pause");
+    try {
+      const failures = await this.cancelPending();
+      if (failures.length) throw new Error("Native cancellation was not confirmed; pause requires reconciliation");
+      const { data: state } = await this.request({ type: "get_state" }, 5000);
+      if (state?.sessionId !== sessionId || state.isStreaming !== false || state.isCompacting !== false || state.pendingMessageCount !== 0) {
+        throw new Error("Same idle native session was not confirmed; pause requires reconciliation");
+      }
+      return state; // Retain this process and its history; no reset or prompt.
+    } catch (error) {
+      // An unconfirmed cancellation cannot be represented as a safe human pause.
+      // The controller still owns browser cleanup and uncertainty/accounting holds.
+      await this.terminate();
+      throw error;
+    }
+  }
+  async cancelPending() {
     const failures = [];
     // abort alone can continue queued messages. This ordering is mandatory.
     try { await this.request({ type: "clear_queue" }, 5000); }
@@ -98,6 +117,10 @@ export class PiRpc extends EventEmitter {
       ]);
       for (const result of results) if (result.status === "rejected") failures.push(result.reason.message);
     }
+    return failures;
+  }
+  async stop(afterAbort = async () => {}) {
+    const failures = await this.cancelPending();
     await afterAbort().catch(error => failures.push(error.message));
     // Own process group only; never stop the shared Steel service or another Pi.
     await this.terminate();

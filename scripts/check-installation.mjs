@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientPaths } from '../app/cvent-api.mjs';
+import { RUN_SKILL_FILES } from '../app/run-policy.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const present = (path, executable = false) => {
@@ -16,10 +17,10 @@ export function checkInstallation({ directory = root, env = process.env, file = 
   check('Node 24 or newer (validated environment: Node 25)', Number(nodeVersion.split('.')[0]) >= 24);
   for (const name of ['pi', 'python3', 'docker']) check(`${name} executable`, executable(name));
   for (const name of ['express', 'multer', 'ws', 'http-proxy']) check(`${name} installed`, file(join(directory, 'node_modules', name, 'package.json')));
-  const python = run('python3', ['-c', 'import openpyxl; assert openpyxl.__version__ == "3.1.5"'], { env, timeout: 5000, stdio: 'ignore' });
-  check('Python openpyxl 3.1.5', python.status === 0);
+  const python = run('python3', ['-c', 'import openpyxl, fcntl; assert openpyxl.__version__ == "3.1.5"; assert callable(fcntl.flock)'], { env, timeout: 5000, stdio: 'ignore' });
+  check('Python openpyxl 3.1.5 and fcntl.flock', python.status === 0);
   for (const [name, path] of Object.entries(clientPaths(env))) check(`External API ${name}`, isAbsolute(path) && file(path));
-  for (const path of ['vendor/ego-lite/package/ego-browser/dist/src/run.js', '.pi/skills/ego-browser/SKILL.md', '.pi/skills/ego-browser/references/steel-bridge.md', 'app/rr-evidence.py', 'app/rr_audit.py']) check(path, file(join(directory, path)));
+  for (const path of ['vendor/ego-lite/package/ego-browser/dist/src/run.js', ...RUN_SKILL_FILES, 'app/rr-evidence.py', 'app/rr_audit.py', 'app/api-operation-lease.mjs', 'app/api-flock.py', 'app/write-uncertainty.mjs', 'app/shared-event-safety.mjs']) check(path, file(join(directory, path)));
   const pin = run('git', ['-C', join(directory, 'vendor/ego-lite'), 'rev-parse', 'HEAD'], { env, timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   check('Pinned Ego revision (does not certify local patch/build)', pin.status === 0 && pin.stdout?.trim() === 'dca7003349c5f7132189ba00547cbbd7ff8e597e');
   check('Pi provider/model selected (authentication not tested)', Boolean(env.PI_PROVIDER && env.PI_MODEL));
@@ -28,7 +29,7 @@ export function checkInstallation({ directory = root, env = process.env, file = 
     (env.CVENT_CLIENT_ID && env.CVENT_CLIENT_SECRET && env.CVENT_API_BASE_URL) ||
     (env.CVENT_CREDENTIALS_FILE && file(env.CVENT_CREDENTIALS_FILE))));
   return { status: checks.every(x => x.status === 'PASS') ? 'OFFLINE_CHECKS_PASS' : 'BLOCKED', checks,
-    limits: 'Local prerequisites only, not deployment or execution acceptance. Docker daemon/pinned image, native model pricing/authentication, credential validity/permissions, vendor patch/build, server ownership, browser handoff and live saved results still require operator verification. No repairs or network requests performed.' };
+    limits: 'Local prerequisites only, not deployment or execution acceptance. Kernel-lock lifetime/concurrency on the deployment filesystem, Docker daemon/pinned image, native model pricing/authentication, credential validity/permissions, vendor patch/build, server ownership, browser handoff and live saved results still require operator verification. No repairs or network requests performed.' };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = checkInstallation();

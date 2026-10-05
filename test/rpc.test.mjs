@@ -32,7 +32,9 @@ function nativeFake(handler) {
     assert.ok(!args.includes("--append-system-prompt"), "no overlapping application system policy");
     assert.ok(!args.includes("--system-prompt"), "retain native tools/system prompt");
     assert.ok(args.includes("--no-skills"));
-    assert.equal(args[args.indexOf("--skill") + 1], "/tmp/.pi/skills/ego-browser/SKILL.md");
+    assert.deepEqual(args.flatMap((arg, i) => arg === "--skill" ? [args[i + 1]] : []),
+      ['cvent-event-build']
+        .map(name => `/tmp/.pi/skills/${name}/SKILL.md`));
     assert.ok(options.env.PATH.startsWith("/tmp/bin:"));
     assert.ok(!args.includes("--no-extensions"));
     assert.ok(!args.some(arg => ["--session", "--continue", "--resume", "-c", "-r"].includes(arg)), "new process must not auto-load an old session");
@@ -110,6 +112,90 @@ test("verified identity persists on same-event subscreens but not conflicting id
     assert.throws(() => resolveNamedEvent(prior.name, { ...observed, info: { url } }, prior));
   }
   assert.throws(() => resolveNamedEvent(prior.name, { ...observed, snapshot: "Sign in Password" }, prior), /login first/);
+});
+
+test("native pause retains the same idle session and history without prompting or terminating", async () => {
+  const state = { sessionId: "current", messageCount: 42, isStreaming: false, isCompacting: false, pendingMessageCount: 0 };
+  const { rpc, commands } = nativeFake(command => command.type === "get_state" ? state : {});
+  let terminated = 0;
+  rpc.terminate = async () => { terminated++; };
+  assert.deepEqual(await rpc.pause("current"), state);
+  assert.deepEqual(commands, ["clear_queue", "abort", "abort_bash", "get_state"]);
+  assert.equal(terminated, 0);
+  assert.equal(rpc.closed, false);
+  // Another pause is still cancellation/inspection, never implicit continuation.
+  await rpc.pause("current");
+  assert.equal(commands.filter(type => type === "get_state").length, 2);
+  assert.ok(!commands.some(type => ["prompt", "new_session", "switch_session", "fork", "steer", "follow_up"].includes(type)));
+});
+
+test("native pause requires the caller's bound session identity before touching execution", async () => {
+  const { rpc, commands } = nativeFake(() => ({}));
+  let terminated = 0;
+  rpc.terminate = async () => { terminated++; };
+  for (const id of [undefined, null, "", 7, {}]) await assert.rejects(rpc.pause(id), /session identity required/);
+  assert.deepEqual(commands, []);
+  assert.equal(terminated, 0);
+});
+
+for (const patch of [
+  { sessionId: "different" }, { sessionId: undefined }, { isStreaming: true },
+  { isStreaming: undefined }, { isCompacting: true }, { isCompacting: undefined },
+  { pendingMessageCount: 1 }, { pendingMessageCount: undefined },
+]) test(`native pause terminates rather than retain unconfirmed state: ${Object.entries(patch).map(([key, value]) => `${key}=${String(value)}`).join(", ")}`, async () => {
+  const { rpc, commands } = nativeFake(command => command.type === "get_state"
+    ? { sessionId: "current", isStreaming: false, isCompacting: false, pendingMessageCount: 0, ...patch } : {});
+  let terminated = 0;
+  rpc.terminate = async () => { terminated++; };
+  await assert.rejects(rpc.pause("current"), /Same idle native session was not confirmed/);
+  assert.equal(terminated, 1);
+  assert.deepEqual(commands, ["clear_queue", "abort", "abort_bash", "get_state"]);
+});
+
+for (const failing of ["clear_queue", "abort", "abort_bash", "get_state"]) test(`native pause fails closed on ${failing} failure without replay`, async () => {
+  const { rpc } = nativeFake(() => ({}));
+  const calls = [];
+  rpc.request = async command => {
+    calls.push(command.type);
+    if (command.type === failing) throw new Error("Request acknowledgement unavailable");
+    return { data: {} };
+  };
+  rpc.terminate = async () => { calls.push("terminate-owned"); };
+  await assert.rejects(rpc.pause("current"), /not confirmed|acknowledgement unavailable/);
+  assert.deepEqual(calls, failing === "clear_queue" ? ["clear_queue", "terminate-owned"]
+    : ["clear_queue", "abort", "abort_bash", ...(failing === "get_state" ? ["get_state"] : []), "terminate-owned"]);
+});
+
+test("native pause waits for both cancellations before checking idle", async () => {
+  const { rpc } = nativeFake(() => ({}));
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const calls = [];
+  rpc.request = async command => {
+    calls.push(command.type);
+    if (command.type === "abort_bash") await gate;
+    return { data: { sessionId: "current", isStreaming: false, isCompacting: false, pendingMessageCount: 0 } };
+  };
+  let completed = false;
+  const pausing = rpc.pause("current").then(() => { completed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ["clear_queue", "abort", "abort_bash"]);
+  assert.equal(completed, false);
+  release(); await pausing;
+  assert.equal(calls.at(-1), "get_state");
+});
+
+test("Stop remains destructive after a successful native pause", async () => {
+  const { rpc, commands } = nativeFake(command => command.type === "get_state"
+    ? { sessionId: "current", isStreaming: false, isCompacting: false, pendingMessageCount: 0 } : {});
+  let terminated = 0, reconciled = 0;
+  rpc.terminate = async () => { terminated++; };
+  await rpc.pause("current");
+  assert.equal(terminated, 0);
+  assert.deepEqual(await rpc.stop(async () => { reconciled++; }), []);
+  assert.equal(terminated, 1);
+  assert.equal(reconciled, 1);
+  assert.deepEqual(commands.slice(-3), ["clear_queue", "abort", "abort_bash"]);
 });
 
 test("Stop clears queues before native cancellation", async () => {
@@ -233,20 +319,23 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal(initialState.currentStage, 'Executing RR');
   assert.ok(prompt.message.startsWith(RUN_POLICY.executionInstructions));
   assert.equal(prompt.message.split(RUN_POLICY.executionInstructions).length, 2, "one native task");
-  assert.ok(!prompt.message.includes(RUN_POLICY.approvedSow), "scope is supplied through the captured file");
+  assert.doesNotMatch(prompt.message, /approved-sow|scopeDocument|SOW/);
   const running = await (await request(`/api/jobs/${first.id}`)).json();
   assert.equal(running.executionPolicy, "native-pi");
   assert.ok(prompt.message.includes('"executionPolicy":"native-pi"'));
   assert.equal(running.allowanceUSD, 60);
   assert.equal(running.targetCostUSD, 60);
   assert.equal(running.externalCostReserveUSD, 10);
-  assert.equal(await readFile(join(first.workspace, "approved-sow.md"), "utf8"), RUN_POLICY.approvedSow);
+  assert.equal(running.approvedSow, undefined);
+  await assert.rejects(readFile(join(first.workspace, "approved-sow.md")), { code: "ENOENT" });
   assert.match(prompt.message, /Annual Conference/);
   assert.match(prompt.message, /evtstub=abc/);
   assert.equal((await request(`/api/jobs/${second.id}/start`, approval)).status, 409);
   assert.equal((await request(`/api/jobs/${first.id}/rpc`, { type: "new_session" })).status, 409);
   assert.equal((await request(`/api/jobs/${first.id}/rpc`, { type: "steer", message: "/danger" })).status, 409);
   assert.equal((await request(`/api/jobs/${first.id}/rpc`, { type: "follow_up", message: "Verify saved results" })).status, 200);
+  assert.match(fake.commands.find(c => c.type === 'follow_up').message, /skills' operating boundaries and the selected event only/);
+  assert.doesNotMatch(fake.commands.find(c => c.type === 'follow_up').message, /SOW/);
   const stream = await request(`/api/jobs/${first.id}/events`);
   assert.equal(stream.headers.get("content-type"), "text/event-stream; charset=utf-8");
   const reader = stream.body.getReader();

@@ -1,0 +1,61 @@
+---
+name: cvent-website
+description: Configure an Emerald event website in Cvent from exact RR branding and content using the assigned Ego/local Steel browser. Covers theme, palette, assets, header/footer, body widget requirements, page order, links and registration connections. Use for Cvent Site Designer work and preview verification without publishing or changing shared templates.
+---
+
+# Cvent website configuration
+
+Read [runner integration](../cvent-rr-build/references/runner-integration.md) and [RR interpretation](../cvent-rr-build/references/rr-interpretation.md) first.
+
+This skill describes desired configuration; it does not itself implement Site Designer automation. Load [Ego](../ego-browser/SKILL.md) and its [Steel bridge reference](../ego-browser/references/steel-bridge.md) for the assigned Page controls and their frame/upload limits. Fixture evidence is not Cvent Site Designer acceptance. Confirm the actual editor's supported operations and save/readback before authoring. If unsupported, report the affected requirements; don't substitute another browser, invent a method, or bypass a guard through raw CDP.
+
+## Work as a broad specialist
+
+Read [operating model](../cvent-rr-build/references/operating-model.md). Pi chooses the website work and its order from the RR, current event and dependencies. Keep theme, assets, headers/footers, pages and widgets together in this skill; don't split by widget or assume a universal site layout.
+
+Treat the sections below as domain coverage, not a default build checklist. Discover the actual designer through Ego and select supported controls from current observations. Historical menu labels, selectors and example events are not fixed recipes. Ask for missing business intent/assets when necessary, not routine navigation decisions that inspection can resolve.
+
+Use the same event/session and source mappings as the registration and discount work. Carry observed page/widget/path identities and saved results forward; revisit a dependency when needed rather than creating placeholder links or guessing an unfinished path. Apply only the design this RR/reference calls for.
+
+## Bind the website and its source
+
+- Verify the selected event ID/displayed name and unpublished status. Use the event's intended website/registration designer, not a guessed account-level template editor.
+- Identify the RR's authoritative branding, copy, links, supplied images and reference-event/template instructions. Don't browse another event as a reference without authorization.
+- Distinguish missing configuration from content not visible in a top-document snapshot. Inspect the relevant frame only using supported frame-aware observations.
+- Establish whether the theme/template/widget is event-local or shared. A new URL or copied template name is not sufficient proof of isolation. Don't alter a shared definition to satisfy one event.
+
+## Configure the required design
+
+### Theme and branding
+
+Use the supplied palette, logo, image assets, typography and relevant layout values exactly. Don't sample an approximate blue, replace a missing logo with a generated substitute, or invent font/style values absent from the RR/reference. Verify supplied image identity, aspect ratio/crop, destination placement and any provided accessibility text. Do not derive new branding from filenames alone.
+
+Asset references in a workbook may point to local files, SharePoint or a missing delivery. Use authorized assets that are actually available; a broken or inaccessible reference is a dependency, not a reason to upload another event's image. Never upload private workbooks, credentials or unrelated files into a website.
+
+### Header and footer
+
+Configure supplied content, logos, links, navigation, contact/legal text and layout. Match destination URLs and visible labels independently. Don't copy workflow notes, staff-only comments or integration IDs into public copy. Verify repeated/global elements on every applicable page and that event-scoped editing does not affect another event.
+
+### Body widgets and pages
+
+For this event, add/configure only the widgets required by its RR/reference. No separate contractual widget inventory is required. If a required type is unavailable, identify the specific blocker instead of replacing it with a text widget and claiming equivalence.
+
+For each required widget, verify its type, exact content, source asset/data, placement, order, alignment, visibility, links and relationship to other widgets/pages. Respect RR-specific variations; don't apply a default all-widget checklist or arbitrary editor order. Do not delete existing widgets to force a layout under this scope; flag conflicts requiring removal.
+
+### Website and registration connection
+
+Check navigation and calls to action route to the correct event's intended registration path, not a previous event, live public launch, unrelated external site or placeholder. Verify supplied social links individually. Preserve query parameters with legitimate routing meaning, but never embed credentials/session tokens in content or reports.
+
+## Operate the designer cautiously
+
+- Ground each selector against observed controls; use screenshots when semantics are insufficient, not as a substitute for discovering a target.
+- Confirm the selected widget/page before edits. Rich-text editors, canvas and drag-and-drop may need specialized supported input. Test one small authorized operation and its readback before applying a repeated pattern.
+- Don't restore an old designer state as a recovery shortcut. If the UI offers Continue versus Restore, understand which preserves current work and do not overwrite newer work without authorization.
+- Save once and wait for confirmed completion/validation. Never refresh, navigate away or replay input while a save is pending or uncertain.
+- Reopen saved settings and use preview to confirm rendered content, positioning, link targets and relevant responsive behavior. A screenshot cannot prove hidden settings; settings alone cannot prove rendered output.
+
+## Boundaries and evidence
+
+No Publish/launch action, attendee access, communications sending, shared-template mutation, cloning/resetting events or arbitrary new assets under this skill. Report any additional prerequisite that would require broader permission.
+
+For each website requirement, retain its RR/reference source, observed event/page/widget identity, verified saved values and preview result. Distinguish unsupported widget types, missing assets, unclear layout instructions and out-of-scope integrations. Pass the evidence to `cvent-rr-verify`. A beautiful-looking page is not an exact RR match unless its required behavior and content also match.

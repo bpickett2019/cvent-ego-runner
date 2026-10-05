@@ -6,10 +6,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mountRR } from '../app/rr-connection.mjs';
 
-test('there is one prompt site and no paid intake, prepared-session pool or continuation branch', async () => {
+test('only initial execution and explicit live-pause Return can prompt; no paid intake or restoration pool', async () => {
   const source = await readFile(new URL('../app/rr-connection.mjs', import.meta.url), 'utf8');
-  assert.equal((source.match(/type: "prompt"/g) || []).length, 1);
-  assert.doesNotMatch(source, /promptReading|configureFromIntake|settleIntake|sameIdleSession|releasePrepared|rr-first|intake\.json|fresh-on-upload/);
+  assert.equal((source.match(/type: "prompt"/g) || []).length, 2);
+  assert.doesNotMatch(source, /promptReading|configureFromIntake|settleIntake|releasePrepared|rr-first|intake\.json|fresh-on-upload/);
+  const resume = source.slice(source.indexOf('app.post("/api/jobs/:id/resume"'), source.indexOf('async function settle(job)'));
+  assert.match(resume, /body.returnControl !== true/);
+  assert.match(resume, /body.pauseId !== record.pauseId/);
+  assert.match(resume, /record.waitingFor !== "operator"/);
+  assert.doesNotMatch(resume, /prepareSession\(|freshSession\(|new_session|switch_session|rpcFactory/);
   assert.throws(() => mountRR(express(), {root:'/unused'}), /Login-first/);
 });
 

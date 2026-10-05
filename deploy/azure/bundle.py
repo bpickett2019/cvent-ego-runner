@@ -10,7 +10,9 @@ import tarfile
 
 PIN = 'dca7003349c5f7132189ba00547cbbd7ff8e597e'
 DIRECTORIES = {'app': {'.mjs', '.py', '.md'}, 'public': {'.js', '.html', '.css'},
-               'ego-bridge': {'.mjs', '.patch'}, '.pi/skills/ego-browser': {'.md'}}
+               'ego-bridge': {'.mjs', '.patch'}}
+# Explicit reviewed skill pack only, not arbitrary local/global skills.
+DIRECTORIES['.pi/skills/cvent-event-build'] = {'.md'}
 FILES = ('package.json', 'package-lock.json', 'requirements.txt', 'bin/ego-browser', 'bin/cvent-api', 'bin/rr-evidence',
          'CVENT-API.md', 'CVENT-API-COVERAGE.md', 'RR-EVIDENCE.md', 'RPC-CONNECTION.md',
          'scripts/check-installation.mjs')

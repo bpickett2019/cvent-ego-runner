@@ -3,7 +3,7 @@ import test from "node:test";
 import { CventConnection } from "../app/cvent-api.mjs";
 
 const eventId = "11111111-1111-1111-1111-111111111111", id = "22222222-2222-2222-2222-222222222222", itemId = "33333333-3333-3333-3333-333333333333";
-const event = { id: eventId, title: "(C+D) Test", status: "Pending" }, target = { apiEventId: eventId, name: event.title };
+const event = { id: eventId, title: "Volume Test", status: "Pending" }, target = { apiEventId: eventId, name: event.title };
 const patch = { active: true, stackable: false, method: { type: "BY_PERCENTAGE", value: 10 }, thresholdType: "AFTER_THRESHOLD_LIMIT", thresholdLimit: 5, interval: 1, includePrimaryRegistrant: false };
 const input = () => ({ name: "Group rate", createIfMissing: true, patch: structuredClone(patch) });
 const existing = () => ({ ...patch, name: "Group rate", id, level: "EVENT", type: "VOLUME_DISCOUNT" });

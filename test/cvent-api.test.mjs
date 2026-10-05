@@ -10,7 +10,7 @@ const id = "11111111-1111-1111-1111-111111111111";
 const other = "22222222-2222-2222-2222-222222222222";
 const credentials = { baseUrl: "https://api-platform.cvent.com/ea", clientId: "private-id", clientSecret: "private-secret" };
 const target = { apiEventId: id, name: "Approved Event" };
-const writeTarget = { ...target, name: "(C+D) Approved Event" };
+const writeTarget = { ...target, name: "Approved Event" };
 const baseline = () => ({ id, title: writeTarget.name, status: "Pending", format: "In-person", timezone: "America/New_York", type: "Conference", languages: ["en-US"], planners: [{ firstName: "A", lastName: "Planner" }], capacity: 10, note: "Original", closeAfter: "2030-01-01T00:00:00.000Z", archiveAfter: "2031-01-01T00:00:00.000Z", customFields: [{ id: "preserved" }], lastModified: "2026-01-01T00:00:00.000Z" });
 const response = value => new Response(JSON.stringify(value), { status: 200 });
 function api(options = {}) { return new CventConnection({ credentials: async () => credentials, intervalMs: 0, discountPollDelaysMs: [0, 1, 2], sleeper: async () => {}, fetcher: async () => { throw new Error('Unmocked network forbidden'); }, ...options }); }
@@ -221,7 +221,8 @@ test("event PUT merges fields, permits deadline changes but not archive/rename/g
   assert.equal(buildEventUpdate(before, { closeAfter: before.closeAfter }).closeAfter, before.closeAfter);
   for (const changes of [{}, [], { archiveAfter: before.archiveAfter }, { launchAfter: null }, { status: "Active" }]) assert.throws(() => buildEventUpdate(before, changes), /prohibited/);
   assert.throws(() => buildEventUpdate(before, { title: "(C+D) Renamed" }), /existing event title/);
-  assert.throws(() => buildEventUpdate({ ...before, title: target.name }, { note: "Test" }), /only \(C\+D\)/);
+  assert.equal(buildEventUpdate({ ...before, title: 'Another ordinary event title' }, { note: "Test" }).title, 'Another ordinary event title');
+  for (const title of ['', '  ', null, undefined]) assert.throws(() => buildEventUpdate({ ...before, title }, { note: 'Test' }), /nonempty title/);
   assert.throws(() => buildEventUpdate({ ...before, planners: undefined }, { note: "Test" }), /required PUT fields/);
   assert.throws(() => buildEventUpdate({ ...before, end: "2029-01-01T00:00:00.000Z" }, { note: "Test" }), /registration deadline is after/);
 });

@@ -120,13 +120,12 @@ or select another browser or profile to resolve a missing host capability.
   boundaries and on its two-second monitor, independently of shell exit status.
   A successful later command cannot mask it; quoted stdout alone cannot create it. Never delete it, reopen the stopped save, or use the helper as a repair
   tool for historical uncertainty. The app's uncertainty stop has no automatic retry.
-- Across the entire approved event-build SOW, create or modify existing objects,
+- For the bound RR build, create or modify existing objects,
   settings and relationships only when their effects are confined to the selected
-  event, including admission items and pricing. Never modify existing shared/account-wide
-  objects or definitions. Reuse an exact shared match; if none exists, create a
-  separate RR-compliant shared build object only without changing existing shared
-  objects, global defaults or other events. Prove scope before writing: an event
-  URL or a newly created template alone does not prove isolation. Event-only type/path
+  event, including admission items and pricing. No shared/account-wide object,
+  definition or default changes under this build. Reuse exact shared matches.
+  Prove scope before writing: an event URL or a newly created template alone
+  does not prove isolation. Event-only type/path
   assignments differ from shared contact-type definitions. Unknown scope blocks
   the affected change; continue independent safe work.
   Never delete/archive anything, including new objects, widgets, rules or links.
@@ -158,9 +157,11 @@ or select another browser or profile to resolve a missing host capability.
   assigned browser to work around a capability gap.
 - The skill's general fetch/CDP examples do not authorize custom API authoring,
   direct connections, prohibited actions, unassigned targets or bypassing guards.
-  Pi may choose Ego or the supported `$CVENT_API_BIN` adapter without an API-first
-  requirement. An explicit denial or uncertain write still cannot be rerouted to
-  the other tool. The job's approved SOW governs authorization; SDK capabilities
+  The active RR build uses `$CVENT_API_BIN` for discount reads/writes and related
+  catalog reads as described by cvent-discounts; other Cvent work uses Ego.
+  Raw HTTP/standalone API helpers and non-discount API writes are not authorized.
+  Never bypass an API denial or uncertain write through the browser.
+  The Cvent skills' operating boundaries govern authorization; SDK capabilities
   do not expand it.
 
 The patch is also saved as `ego-bridge/patches/steel-session-ledger.patch` so

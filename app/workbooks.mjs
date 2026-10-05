@@ -2,6 +2,7 @@ import multer from 'multer';
 import { spawn } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, chmod } from 'node:fs/promises';
+import { renameSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 
 const sha = data => createHash('sha256').update(data).digest('hex');
@@ -30,7 +31,8 @@ function workbookTool(root, input) {
     child.stdin.end(JSON.stringify(input));
   });
 }
-export function mountWorkbooks(app, { root, isBusy }) {
+export function mountWorkbooks(app, { root, isBusy, withUpload = create => create(), withSave, runWorkbook = workbookTool }) {
+  if (typeof withSave !== 'function') throw new Error('Context-bound workbook save guard required');
   const base = join(root, 'data/workbooks'), upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
   const working = new Set();
   const folder = id => { if (!validId(id)) throw new Error('Invalid workbook identity'); return join(base, id); };
@@ -44,18 +46,21 @@ export function mountWorkbooks(app, { root, isBusy }) {
   app.post('/api/workbooks', upload.single('rr'), async (req, res) => {
     if (isBusy()) throw new Error('Stop the active build before preparing another workbook');
     if (!req.file || !/\.xlsx$/i.test(req.file.originalname)) throw new Error('Choose an .xlsx workbook');
-    const id = randomUUID(), dir = folder(id);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    const source = join(dir, 'original.xlsx');
-    await writeFile(source, req.file.buffer, { mode: 0o400, flag: 'wx' });
-    const preview = await workbookTool(root, { action: 'preview', source });
-    const manifest = { id, originalName: basename(req.file.originalname), file: 'original.xlsx', sha256: sha(req.file.buffer), originalSha256: sha(req.file.buffer), revision: 0 };
-    await save(join(dir, 'manifest.json'), manifest);
-    res.status(201).json({ ...manifest, ...preview });
+    const result = await withUpload(async () => {
+      const id = randomUUID(), dir = folder(id);
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      const source = join(dir, 'original.xlsx');
+      await writeFile(source, req.file.buffer, { mode: 0o400, flag: 'wx' });
+      const preview = await runWorkbook(root, { action: 'preview', source });
+      const manifest = { id, originalName: basename(req.file.originalname), file: 'original.xlsx', sha256: sha(req.file.buffer), originalSha256: sha(req.file.buffer), revision: 0 };
+      await save(join(dir, 'manifest.json'), manifest);
+      return { ...manifest, ...preview };
+    }, req.body.contextId);
+    res.status(201).json(result);
   });
   app.get('/api/workbooks/:id', async (req, res) => {
     const { manifest, path } = await current(req.params.id);
-    const preview = await workbookTool(root, { action: 'preview', source: path, sheet: Number(req.query.sheet || 0), offset: Number(req.query.offset || 0) });
+    const preview = await runWorkbook(root, { action: 'preview', source: path, sheet: Number(req.query.sheet || 0), offset: Number(req.query.offset || 0) });
     res.json({ ...manifest, ...preview });
   });
   app.get('/api/workbooks/:id/download', async (req, res) => {
@@ -67,15 +72,20 @@ export function mountWorkbooks(app, { root, isBusy }) {
     if (isBusy() || working.has(id)) throw new Error('Workbook is locked while a build or save is active');
     working.add(id);
     try {
-      const { dir, manifest, path } = await current(id);
-      if (req.body.sha256 !== manifest.sha256) throw new Error('Workbook changed; reload before editing');
-      const file = `version-${randomUUID()}.xlsx`, destination = join(dir, file);
-      await workbookTool(root, { action: 'edit', source: path, destination, sheet: req.body.sheet, edits: req.body.edits });
-      await chmod(destination, 0o400);
-      const next = { ...manifest, file, sha256: sha(await readFile(destination)), revision: manifest.revision + 1 };
-      // Prior version and immutable original are backups; never overwrite them.
-      await save(join(dir, 'manifest.json'), next);
-      res.json(next);
+      const result = await withSave(async () => {
+        const { dir, manifest, path } = await current(id);
+        if (req.body.sha256 !== manifest.sha256) throw new Error('Workbook changed; reload before editing');
+        const file = `version-${randomUUID()}.xlsx`, destination = join(dir, file);
+        await runWorkbook(root, { action: 'edit', source: path, destination, sheet: req.body.sheet, edits: req.body.edits });
+        await chmod(destination, 0o400);
+        const next = { ...manifest, file, sha256: sha(await readFile(destination)), revision: manifest.revision + 1 };
+        const manifestPath = join(dir, 'manifest.json'), staged = `${manifestPath}.${randomUUID()}.tmp`;
+        await writeFile(staged, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+        // Failed/cancelled saves retain private artifacts, never change selection.
+        // The controller calls this synchronous commit only after final checks.
+        return () => { renameSync(staged, manifestPath); return next; };
+      }, req.body.contextId, id);
+      res.json(result);
     } finally { working.delete(id); }
   });
 }

@@ -5,7 +5,7 @@ import { CventConnection, CAPABILITIES } from "../app/cvent-api.mjs";
 const eventId = "11111111-1111-1111-1111-111111111111";
 const discountId = "22222222-2222-2222-2222-222222222222";
 const otherId = "33333333-3333-3333-3333-333333333333";
-const target = { apiEventId: eventId, name: "(C+D) Approved Event" };
+const target = { apiEventId: eventId, name: "Approved Event" };
 const event = { id: eventId, title: target.name, status: "Pending" };
 const credentials = { baseUrl: "https://api-platform.cvent.com/ea", clientId: "test-id", clientSecret: "test-secret" };
 const baseline = () => ({ id: discountId, level: "EVENT", type: "DISCOUNT_CODE", name: "Test discount", code: "EXISTING", active: false, stackable: false, method: { type: "BY_PERCENTAGE", value: 10 }, note: "Original", audienceType: "ALL", includeGuestsTowardsCapacity: false, autoApply: false, applyToAllAgendaItems: false, capacity: { total: 100, used: 3 }, created: "2025-01-01", lastModified: "2026-01-01" });
@@ -66,6 +66,19 @@ test("existing event code updates preserve unrelated fields; exact spelling cann
   const result = await f.run(); assert.equal(result.action, 'updated'); assert.equal(result.requirementsSatisfied, true);
   assert.deepEqual(result.saved, { ...baseline(), note: 'Requested', lastModified: '2026-02-01' });
   assert.equal(f.writes.length, 1); assert.equal(f.writes[0].method, 'PUT');
+});
+test("unsupported registration-type filters block before discount intent or mutation", async () => {
+  for (const unsupported of [{ registrationTypeIds: [otherId] }, { advancedFilters: { operator: 'OR', registrationTypes: [otherId] } }]) {
+    const f = fixture({ rows: [] });
+    await assert.rejects(f.run({ code: 'NEW', patch: { ...fullPatch(), ...unsupported }, createIfMissing: true }), /supported patch/);
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.evidence.length, 0);
+  }
+});
+test("discount API still rejects a different event name without relying on prefixes", async () => {
+  const f = fixture({ event: { ...event, title: 'Different Event' } });
+  await assert.rejects(f.run(), /identity\/name differs/);
+  assert.equal(f.writes.length, 0);
 });
 test("already-satisfied discounts are verified no-ops without intent or mutation", async () => {
   const f = fixture(); const r = await f.run({ code: "EXISTING", patch: { note: "Original" } });

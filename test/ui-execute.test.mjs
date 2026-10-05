@@ -4,15 +4,19 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace-routing.js';
 import { requirementProgress } from '../public/requirement-progress.js';
+import { executionReadiness } from '../public/execution-readiness.js';
+import { runOutcome } from '../public/run-outcome.js';
 // Inject the real pure exports into this DOM fixture; browser module loading
 // is separately exercised by the live UI check.
 const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
   .replace("import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';\n", '')
-  .replace("import { requirementProgress } from './requirement-progress.js';\n", '');
+  .replace("import { requirementProgress } from './requirement-progress.js';\n", '')
+  .replace("import { executionReadiness } from './execution-readiness.js';\n", '')
+  .replace("import { runOutcome } from './run-outcome.js';\n", '');
 const runtime = { ownership: 'AGENT', loginFirst: true };
 const turn = () => new Promise(r => setImmediate(r));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
-function fixture(fetcher, { confirmResult = true, storage = new Map([['rrJobId', 'job'], ['rrTargetName', 'Selected Event']]) } = {}) {
+function fixture(fetcher, { confirmResult = true, history = [], storage = new Map([['rrJobId', 'job'], ['rrTargetName', 'Selected Event']]) } = {}) {
   const elements = new Map();
   const get = id => {
     if (!elements.has(id)) {
@@ -25,14 +29,128 @@ function fixture(fetcher, { confirmResult = true, storage = new Map([['rrJobId',
     return elements.get(id);
   };
   let created = 0;
-  const context = vm.createContext({ document: { getElementById: get, createElement: () => get(`created-${created++}`) }, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: () => confirmResult, setInterval() {}, FormData: class { append() {} }, fetch: async (path, options) => { const data = await (path === '/api/jobs' && !options?.method ? [] : fetcher(path, options)); return { ok: true, json: async () => data }; } });
-  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, requirementProgress, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
+  const confirmations = [];
+  const context = vm.createContext({ document: { getElementById: get, createElement: () => get(`created-${created++}`) }, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: text => { confirmations.push(text); return confirmResult; }, setInterval() {}, FormData: class { append() {} }, fetch: async (path, options) => { const data = await (path === '/api/jobs' && !options?.method ? history : fetcher(path, options)); return { ok: true, json: async () => data }; } });
+  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, requirementProgress, executionReadiness, runOutcome, AbortSignal, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
   const fetcherWithFixture = context.fetch;
   context.fetch = (path, options) => path === '/local-workspaces.json' ? Promise.resolve({ status: 404 }) : fetcherWithFixture(path, options);
   vm.runInContext(source, context);
-  return { get, context, storage };
+  return { get, context, storage, confirmations };
 }
 const response = (path, record) => path === '/api/runtime' ? runtime : path.endsWith('/results/state.json') ? {} : record;
+
+const readiness = (patch = {}) => ({ version: 1, scope: 'shared', checkedAt: new Date().toISOString(), capacity: 'AVAILABLE', holder: null,
+  eventSafety: 'SCOPED_HOLDS', holdCount: 1, owners: [{ workspace: 3, jobId: '33333333-3333-4333-8333-333333333333', scope: 'event' }], ...patch });
+test('successful Clear removes only the form and keeps historical event holds visible', async () => {
+  const posts = [], f = fixture((path, options) => {
+    if (options?.method) { posts.push(path); return { cleared: true, executionHoldsCleared: false, sharedSlotReleased: false }; }
+    if (path === '/api/execution-status') return readiness();
+    return response(path, { id: 'job', status: 'STOPPED' });
+  });
+  await turn(); await f.get('newRR').onclick(); await turn();
+  assert.deepEqual(posts, ['/api/new-rr']); assert.match(f.get('message').textContent, /Workspace cleared/);
+  assert.match(f.get('capacityStatus').textContent, /CAPACITY AVAILABLE/); assert.match(f.get('eventSafetyStatus').textContent, /require reconciliation/);
+  assert.match(f.get('safetyOwners').children[0].textContent, /Workspace 3/); assert.equal(f.storage.has('rrJobId'), false);
+});
+test('failed Clear retains selection and reports uncertainty independently of available capacity', async () => {
+  const f = fixture((path, options) => {
+    if (options?.method) throw Error('New RR blocked for selected run: reconciliation required');
+    return path === '/api/execution-status' ? readiness() : response(path, { id: 'job', status: 'STOPPED' });
+  });
+  await turn(); await f.get('newRR').onclick(); await turn();
+  assert.equal(f.storage.get('rrJobId'), 'job'); assert.match(f.get('message').textContent, /Clear was not confirmed/);
+  assert.match(f.get('eventSafetyStatus').textContent, /reconciliation/); assert.equal(f.get('newRR').disabled, false);
+});
+test('readiness outage never overwrites Clear success or advertises ready', async () => {
+  const f = fixture((path, options) => {
+    if (options?.method) return { cleared: true };
+    if (path === '/api/execution-status') throw Error('Unavailable');
+    return response(path, { id: 'job', status: 'STOPPED' });
+  });
+  await turn(); await f.get('newRR').onclick(); await turn();
+  assert.match(f.get('message').textContent, /Workspace cleared/); assert.equal(f.get('capacityStatus').textContent, 'CAPACITY UNKNOWN');
+  assert.equal(f.get('upload').disabled, false);
+});
+test('a hung runtime read cannot keep stale available status when readiness is unavailable', async () => {
+  const delayed = deferred(); let hung = false;
+  const f = fixture(path => {
+    if (path === '/api/execution-status') { if (hung) throw Error('Status unavailable'); return readiness(); }
+    if (path === '/api/runtime' && hung) return delayed.promise;
+    return response(path, { id: 'job', status: 'STOPPED' });
+  });
+  await turn(); assert.match(f.get('capacityStatus').textContent, /CAPACITY AVAILABLE/);
+  hung = true; vm.runInContext('readinessReadAt=0', f.context);
+  const pending = vm.runInContext('refresh()', f.context); await turn();
+  assert.equal(f.get('capacityStatus').textContent, 'CAPACITY UNKNOWN');
+  delayed.resolve(runtime); await pending;
+});
+test('a late pre-Clear readiness response cannot hide newer uncertainty', async () => {
+  const delayed = deferred(); let first = true;
+  const f = fixture((path, options) => {
+    if (options?.method) return { cleared: true };
+    if (path === '/api/execution-status') { if (first) { first = false; return delayed.promise; } return readiness(); }
+    return response(path, { id: 'job', status: 'STOPPED' });
+  });
+  await turn(); await f.get('newRR').onclick(); await turn();
+  delayed.resolve(readiness({ eventSafety: 'CLEAR', holdCount: 0, owners: [] })); await turn();
+  assert.match(f.get('eventSafetyStatus').textContent, /require reconciliation/); assert.match(f.get('message').textContent, /Historical event reviews/);
+});
+
+for(const [status,note] of [['RELEASED',/No execution reservation remains/],['EMPTY',/No execution reservation remains/],['OTHER_WORKSPACE',/Another workspace owns execution capacity and was not changed/],['REVIEW_REQUIRED',/Capacity release still needs review/]])test(`workspace Clear sends explicit replacement and truthfully reports ${status}`,async()=>{
+  const posts=[];let current=null;
+  const f=fixture((path,options)=>{
+    if(options?.method){const body=JSON.parse(options.body);posts.push({path,body});current={id:'11111111-1111-4111-8111-111111111111',jobId:null,workbookId:null};return {cleared:true,rrContext:current,sharedSlotReleased:status==='RELEASED',sharedSlotStatus:status,slotError:{error:'Cleanup proof unavailable'}};}
+    if(path==='/api/runtime')return {...runtime,workspaceResetSupported:true,rrContext:current};
+    if(path==='/api/execution-status')return readiness();
+    return response(path,{id:'job',status:'STOPPED'});
+  });
+  await turn();await f.get('newRR').onclick();await turn();
+  assert.equal(posts.length,1);assert.equal(posts[0].path,'/api/new-rr');assert.equal(posts[0].body.replaceWorkspace,true);
+  assert.equal(posts[0].body.contextId,null);assert.match(f.get('message').textContent,note);assert.equal(f.storage.get('rrContextId'),'11111111-1111-4111-8111-111111111111');
+  assert.equal(f.storage.has('rrJobId'),false);
+});
+test('capable backend allows a pre-AI target correction and locks the field after execution begins', async () => {
+  const posts=[],record={id:'job',requestedEventName:'Original Event',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'};
+  let ownership='USER';
+  const f=fixture((path,options)=>{
+    if(options?.method){const body=JSON.parse(options.body);posts.push({path,body});record.requestedEventName=body.eventName;record.phase='EXECUTING';record.waitingFor=null;record.aiStartedAt=new Date().toISOString();ownership='AGENT';return {accepted:true,aiStarted:true};}
+    return path==='/api/runtime'?{ownership,loginFirst:true,setupTargetEditable:true}:response(path,record);
+  });
+  await turn();assert.equal(f.get('eventName').disabled,false);
+  f.get('eventName').value='Any Existing Event';f.get('eventName').oninput();
+  await f.get('take').onclick();
+  assert.equal(posts.length,1);assert.equal(posts[0].path,'/api/jobs/job/answer');
+  assert.equal(posts[0].body.eventName,'Any Existing Event');assert.equal(posts[0].body.returnControl,true);
+  assert.equal(f.get('eventName').disabled,true);assert.equal(f.storage.get('rrTargetName'),'Any Existing Event');
+  assert.match(f.get('eventTitle').textContent,/Any Existing Event/);
+});
+
+test('old backend keeps the waiting target locked and receives no unsupported field', async () => {
+  let body;
+  const f=fixture((path,options)=>{if(options?.method){body=JSON.parse(options.body);return {accepted:true,aiStarted:false};}return path==='/api/runtime'?{ownership:'USER',loginFirst:true}:response(path,{id:'job',requestedEventName:'Original Event',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'});});
+  await turn();assert.equal(f.get('eventName').disabled,true);await f.get('take').onclick();
+  assert.equal(Object.hasOwn(body,'eventName'),false);
+});
+
+test('failed lookup remains editable and exposes the actual handoff blocker instead of claiming continuation', async () => {
+  const record={id:'job',requestedEventName:'Missing Event',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'};
+  const f=fixture((path,options)=>{if(options?.method){record.lastAssistantText='No exact event-name match was found through the Cvent API';return {accepted:true,aiStarted:false};}return path==='/api/runtime'?{ownership:'USER',loginFirst:true,setupTargetEditable:true}:response(path,record);});
+  await turn();await f.get('take').onclick();
+  assert.match(f.get('message').textContent,/No exact event-name match/);assert.equal(f.get('message').className,'activity-error');
+  assert.equal(f.get('eventName').disabled,false);assert.equal(f.get('take').disabled,false);
+});
+
+test('empty editable target cannot submit a Return request', async () => {
+  const posts=[];
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return path==='/api/runtime'?{ownership:'USER',loginFirst:true,setupTargetEditable:true}:response(path,{id:'job',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'});});
+  await turn();f.get('eventName').value='   ';await f.get('take').onclick();
+  assert.deepEqual(posts,[]);assert.match(f.get('message').textContent,/exact existing Cvent event name/);
+});
+
+test('runtime advertises target editing only with the new backend implementation', async () => {
+  const server=await readFile(new URL('../app/server.mjs',import.meta.url),'utf8');
+  assert.match(server,/setupTargetEditable: true/);
+});
 
 test('requirement statuses drive live bullets and polling counts without sending agent actions', async () => {
   const posts = [], record = { id: 'job', status: 'RUNNING', phase: 'EXECUTING' };
@@ -107,8 +225,9 @@ test('exclusions alone stay visible and never count as completion', async () => 
     : response(path, { id: 'job', status: 'STOPPED' }));
   await turn();
   assert.equal(f.get('progressLists').hidden, false); assert.equal(f.get('excludedProgress').hidden, false);
-  assert.equal(f.get('completionTitle').textContent, 'No completed work reported');
-  assert.match(f.get('completionCount').textContent, /0 remaining · 1 excluded/);
+  assert.equal(f.get('completionTitle').textContent, 'Stopped');
+  assert.equal(f.get('completionMark').textContent, '■');
+  assert.match(f.get('completionCount').textContent, /unconfirmed remaining · 1 excluded/);
 });
 
 test('requirement content renders as literal text, not workbook-supplied markup', async () => {
@@ -125,7 +244,7 @@ test('requirement content renders as literal text, not workbook-supplied markup'
 test('an old startup rejection is displayed as retired, never as a current operator prerequisite', async () => {
   const reason = 'Operator decision required before a new RR: inspect data/jobs/prior/unresolved-changes.json. Authorize separate read-only saved-state verification; repair or acceptance needs explicit approval. No AI started.';
   const f = fixture(path => response(path, {id:'job',status:'STOPPED',phase:'SETTLED',stopReason:reason,piCostUSD:0,totalEventCostUSD:0}));
-  await turn(); assert.equal(f.get('stage').textContent, 'STOPPED');
+  await turn(); assert.equal(f.get('stage').textContent, 'Stopped');
   assert.match(f.get('action').textContent, /retired startup rule.*Upload a new RR/);
   assert.doesNotMatch(f.get('action').textContent, /Operator decision|unresolved-changes|Checking previous interrupted change/);
   assert.match(f.get('cost').textContent, /\$0\.00 this run/);
@@ -190,6 +309,71 @@ test('invalid or reversed timestamps never display NaN or a negative execution t
   }
 });
 
+test('fresh single-runner tab selects its sole waiting job before replacing an Excel file', async () => {
+  const posts = [], record = { id: 'waiting-job', originalName: 'old.xlsx', requestedEventName: 'Bound Target', status: 'RUNNING', phase: 'AWAITING_INPUT', waitingFor: 'setup', workflow: 'login-first', piCostUSD: 0 };
+  const preview = { id: 'new-workbook', originalName: 'new.xlsx', sheets: [{name:'Sheet',rows:0,columns:1}], sheet:0, offset:0, rows:[], columns:['A'] };
+  const f = fixture((path, options) => {
+    if (options?.method) {
+      posts.push(path);
+      if (path === '/api/new-rr') { assert.equal(JSON.parse(options.body).jobId, record.id); record.status = 'STOPPED'; return { cleared:true }; }
+      if (path === '/api/workbooks') return preview;
+      assert.fail(`Unexpected execution request: ${path}`);
+    }
+    return path === '/api/runtime' ? {ownership:'USER',loginFirst:true} : response(path, record);
+  }, { storage:new Map(), history:[record] });
+  await turn();
+  assert.equal(f.storage.get('rrJobId'), record.id);
+  assert.equal(f.get('jobSelect').value, record.id);
+  assert.equal(f.get('eventName').value, 'Bound Target');
+  assert.equal(f.get('stop').disabled, false);
+  assert.equal(f.get('rr').disabled, false);
+  assert.match(f.get('status').textContent, /AI NOT STARTED/);
+  f.get('rr').files = [{name:'new.xlsx'}]; await f.get('rr').onchange();
+  assert.equal(f.confirmations.length, 1);
+  assert.deepEqual(posts, ['/api/new-rr','/api/workbooks']);
+  assert.equal(f.storage.get('rrWorkbookId'), preview.id);
+  assert.equal(f.storage.has('rrJobId'), false);
+  assert.equal(f.get('eventName').value, 'Bound Target');
+});
+
+test('cancelled replacement of an auto-selected waiting job makes no mutation requests', async () => {
+  const posts=[], record={id:'waiting-job',requestedEventName:'Bound Target',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'};
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return response(path,record);}, {storage:new Map(),history:[record],confirmResult:false});
+  await turn(); f.get('rr').files=[{name:'new.xlsx'}]; await f.get('rr').onchange();
+  assert.equal(f.confirmations.length,1); assert.deepEqual(posts,[]);
+  assert.equal(f.storage.get('rrJobId'),record.id);
+});
+
+test('file replacement stays disabled until startup job discovery finishes', async () => {
+  const gate=deferred(), posts=[];
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return response(path,null);},{storage:new Map(),history:gate.promise});
+  await turn(); assert.equal(f.get('rr').disabled,true); assert.equal(f.get('newRR').disabled,true);
+  f.get('rr').files=[{name:'early.xlsx'}]; await f.get('rr').onchange();
+  assert.deepEqual(posts,[]);
+  gate.resolve([]); await turn(); assert.equal(f.get('rr').disabled,false);
+});
+
+test('malformed startup history blocks intake while retaining Stop for a known active job', async () => {
+  const posts=[], record={id:'job',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup'};
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return response(path,record);},{history:{invalid:true}});
+  await turn();
+  assert.equal(f.get('rr').disabled,true); assert.equal(f.get('newRR').disabled,true);
+  assert.equal(f.get('stop').disabled,false); assert.match(f.get('message').textContent,/Refresh before uploading/);
+  f.get('rr').files=[{name:'new.xlsx'}]; await f.get('rr').onchange();
+  assert.deepEqual(posts,[]);
+});
+
+test('startup job discovery preserves an explicit history selection and never guesses among multiple active jobs', async () => {
+  const activeJobs=[{id:'one',status:'RUNNING'},{id:'two',status:'STOPPING'}];
+  for (const selected of [undefined,'saved-job']) {
+    const storage=new Map(selected?[['rrJobId',selected],['rrTargetName','Chosen Target']]:[]);
+    const f=fixture(path=>response(path,{id:'saved-job',status:'STOPPED'}),{storage,history:activeJobs});
+    await turn(); assert.equal(storage.get('rrJobId'),selected);
+    assert.equal(vm.runInContext('jobId',f.context),selected ?? null);
+    if(selected)assert.equal(f.get('eventName').value,'Chosen Target');
+  }
+});
+
 test('Clear/New RR waits for confirmed cleanup, clears persisted selection and grid, and never starts AI',async()=>{
   const gate=deferred(),posts=[];
   const f=fixture((path,options)=>{if(options?.method){posts.push(path);return gate.promise;}return response(path,{id:'job',status:'RUNNING',phase:'EXECUTING'});});
@@ -212,10 +396,168 @@ test('choosing another Excel automatically resets before uploading preview, not 
   });
   await turn();assert.equal(f.get('rr').disabled,false);f.get('rr').files=[{name:'new.xlsx'}];await f.get('rr').onchange();
   assert.deepEqual(posts,['/api/new-rr','/api/workbooks']);assert.equal(f.storage.get('rrWorkbookId'),'new-workbook');assert.equal(f.storage.has('rrJobId'),false);
-  assert.equal(vm.runInContext('workbook.id',f.context),'new-workbook');assert.match(f.get('message').textContent,/AI is off/);
+  assert.equal(vm.runInContext('workbook.id',f.context),'new-workbook');assert.match(f.get('message').textContent,/AI starts only after verified Return/);
   assert.equal(f.get('eventName').value,'Selected Event');assert.equal(f.storage.get('rrTargetName'),'Selected Event');
   assert.equal(f.get('rr').files[0].name,'new.xlsx');assert.match(f.get('rrSelection').textContent,/Saved: new.xlsx/);
 });
+test('successful upload clears all prior run UI immediately even when runtime polling fails', async () => {
+  const posts=[],old={id:'job',originalName:'OLD.xlsx',status:'STOPPED',lastAssistantText:'OLD answer',stopReason:'OLD failure',activity:[{at:'before',message:'OLD activity'}]};
+  const preview={id:'11111111-1111-1111-1111-111111111111',originalName:'new.xlsx',sheets:[{name:'Sheet',rows:0,columns:1}],sheet:0,offset:0,rows:[],columns:['A']};
+  let pollFails=false;
+  const f=fixture((path,options)=>{
+    if(options?.method){posts.push(path);if(path==='/api/new-rr')return {cleared:true};if(path==='/api/workbooks'){pollFails=true;return preview;}assert.fail(path);}
+    if(path==='/api/runtime'&&pollFails)throw new Error('Temporary status read failure');
+    if(path.endsWith('/results/state.json'))return {requirements:[{id:'OLD',label:'OLD completed work',status:'verified_changed'}]};
+    return response(path,old);
+  },{history:[old,{id:'older-job',originalName:'OLDER.xlsx',status:'STOPPED'}]});
+  await turn();assert.equal(f.get('results').hidden,false);assert.match(f.get('agentReply').textContent,/OLD answer/);
+  f.get('answer').value='OLD reply';f.get('sessionInvalidated').checked=true;
+  f.get('rr').files=[{name:'new.xlsx'}];await f.get('rr').onchange();
+  assert.deepEqual(posts,['/api/new-rr','/api/workbooks']);assert.equal(f.storage.has('rrJobId'),false);
+  assert.equal(f.get('jobSelect').children.length,1);assert.equal(f.get('jobSelect').children[0].textContent,'new.xlsx');assert.equal(f.get('jobSelect').disabled,true);
+  assert.equal(f.get('results').hidden,true);assert.equal(f.get('results').href,'');
+  for(const id of ['agentReply','question'])assert.equal(f.get(id).textContent,'');
+  assert.equal(f.get('answer').value,'');assert.equal(f.get('sessionInvalidated').checked,false);
+  for(const id of ['questionPanel','progressLists','excludedProgress'])assert.equal(f.get(id).hidden,true);
+  for(const id of ['completed','pending','excluded','activity'])assert.equal(f.get(id).children[0].textContent,'None');
+  assert.equal(f.get('elapsed').textContent,'00:00:00');assert.equal(f.get('status').textContent,'Not running');assert.equal(f.get('stage').textContent,'UPLOAD');
+  assert.equal(f.get('take').disabled,true,'unknown runtime cannot grant browser control');
+  assert.match(f.get('cost').textContent,/prior spending retained/);
+  assert.equal(f.get('eventName').value,'Selected Event');assert.equal(old.stopReason,'OLD failure','no historical record rewrite');
+});
+
+test('new upload stays fresh on reload and repeated uploads of the same filename', async () => {
+  const old={id:'job',originalName:'same.xlsx',status:'STOPPED'};
+  const ids=['11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222'];
+  let uploads=0;const posts=[];
+  const preview=id=>({id,originalName:'same.xlsx',sheets:[{name:'Sheet',rows:0,columns:1}],sheet:0,offset:0,rows:[],columns:['A']});
+  const fetcher=(path,options)=>{
+    if(options?.method){posts.push(path);if(path==='/api/new-rr')return {cleared:true};if(path==='/api/workbooks')return preview(ids[uploads++]);assert.fail(path);}
+    if(path.startsWith('/api/workbooks/'))return preview(path.split('/').at(-1));
+    return response(path,old);
+  };
+  const f=fixture(fetcher,{history:[old]});await turn();
+  f.get('rr').files=[{name:'same.xlsx'}];await f.get('rr').onchange();
+  const reloaded=fixture(fetcher,{storage:f.storage,history:[old]});await turn();
+  assert.equal(reloaded.get('jobSelect').value,'');assert.equal(reloaded.get('jobSelect').children.length,1);
+  assert.equal(reloaded.get('results').hidden,true);assert.equal(reloaded.get('stage').textContent,'UPLOAD');
+  assert.equal(vm.runInContext('jobId',reloaded.context),null);
+  reloaded.get('rr').files=[{name:'same.xlsx'}];await reloaded.get('rr').onchange();
+  assert.equal(reloaded.storage.get('rrWorkbookId'),ids[1]);assert.equal(reloaded.storage.has('rrJobId'),false);
+  assert.deepEqual(posts,['/api/new-rr','/api/workbooks','/api/new-rr','/api/workbooks']);
+});
+
+test('a late old-run poll cannot restore results after a new file upload', async () => {
+  const gate=deferred();let delayNext=false;
+  const old={id:'job',originalName:'OLD.xlsx',status:'STOPPED',lastAssistantText:'OLD report'};
+  const preview={id:'new',originalName:'new.xlsx',sheets:[{name:'Sheet',rows:0,columns:1}],sheet:0,offset:0,rows:[],columns:['A']};
+  const f=fixture((path,options)=>{
+    if(options?.method)return path==='/api/new-rr'?{cleared:true}:preview;
+    if(path==='/api/runtime'&&delayNext){delayNext=false;return gate.promise;}
+    return response(path,old);
+  },{history:[old]});await turn();
+  delayNext=true;const pending=vm.runInContext('refresh()',f.context);
+  f.get('rr').files=[{name:'new.xlsx'}];await f.get('rr').onchange();
+  gate.resolve(runtime);await pending;
+  assert.equal(f.get('agentReply').textContent,'');assert.equal(f.get('results').hidden,true);
+  assert.equal(f.get('jobSelect').children.length,1);assert.equal(f.get('jobSelect').value,'');
+  assert.equal(f.get('stage').textContent,'UPLOAD');assert.equal(vm.runInContext('job',f.context),null);
+});
+
+test('enabling reset support does not clear an existing selection before the operator requests a reset', async () => {
+  const book='11111111-1111-1111-1111-111111111111';
+  const old={id:'job',status:'STOPPED',originalName:'Selected.xlsx'};
+  const saved={id:book,originalName:'Selected.xlsx',sheet:0,offset:0,rows:[],columns:['A'],sheets:[{name:'Sheet',rows:0,columns:1}]};
+  const storage=new Map([['rrJobId','job'],['rrWorkbookId',book],['rrTargetName','Selected Event']]);
+  const f=fixture(path=>path==='/api/runtime'?{ownership:'USER',loginFirst:true,rrContext:null}:path.startsWith('/api/workbooks/')?saved:response(path,old),{storage,history:[old]});
+  await turn();assert.equal(f.storage.get('rrJobId'),'job');assert.equal(f.storage.get('rrWorkbookId'),book);
+  assert.equal(f.get('eventName').value,'Selected Event');assert.match(f.get('workbookName').textContent,/Selected.xlsx/);
+  assert.equal(f.get('newRR').disabled,false);
+});
+
+test('backend-confirmed Clear persists its reset and stale tabs cannot restore old selections', async () => {
+  const oldJob='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',oldBook='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const first='11111111-1111-1111-1111-111111111111',next='22222222-2222-2222-2222-222222222222';
+  let context={id:first,jobId:oldJob,workbookId:oldBook};const reads=[],posts=[];
+  const old={id:oldJob,status:'STOPPED',originalName:'OLD.xlsx',requestedEventName:'Old Event'};
+  const saved={id:oldBook,originalName:'OLD.xlsx',sheet:0,offset:0,rows:[],columns:['A'],sheets:[{name:'Sheet',rows:0,columns:1}]};
+  const storage=new Map([['rrContextId',first],['rrJobId',oldJob],['rrWorkbookId',oldBook],['rrTargetName','Old Event']]);
+  const staleStorage=new Map(storage);
+  const fetcher=(path,options)=>{
+    if(options?.method){posts.push({path,body:JSON.parse(options.body)});context={id:next,jobId:null,workbookId:null};return {cleared:true,rrContext:context};}
+    reads.push(path);
+    if(path==='/api/runtime')return {ownership:'USER',loginFirst:true,browserStopped:true,rrContext:context};
+    if(path.startsWith('/api/workbooks/'))return saved;
+    return response(path,old);
+  };
+  const f=fixture(fetcher,{storage,history:[old]});await turn();await f.get('newRR').onclick();
+  assert.deepEqual(posts,[{path:'/api/new-rr',body:{jobId:oldJob,contextId:first,prepareUpload:false}}]);
+  assert.deepEqual([...storage],[['rrContextId',next]]);
+  assert.equal(f.get('workbookName').textContent,'No RR selected');assert.equal(f.get('eventName').value,'');
+  assert.equal(f.get('results').hidden,true);assert.equal(f.get('stage').textContent,'UPLOAD');
+  reads.length=0;
+  const staleTab=fixture(fetcher,{storage:staleStorage,history:[old]});await turn();await turn();
+  assert.deepEqual([...staleStorage],[['rrContextId',next]]);
+  assert.equal(staleTab.get('workbookName').textContent,'No RR selected');assert.equal(staleTab.get('eventName').value,'');
+  assert.equal(staleTab.get('rr').disabled,false);
+  assert.ok(!reads.some(p=>p.startsWith('/api/workbooks/')||p.startsWith('/api/jobs/')),'server context is read before old cached pointers');
+});
+
+test('server-selected fresh workbook replaces stale cached workbook on reload without restoring old results', async () => {
+  const generation='11111111-1111-1111-1111-111111111111',book='22222222-2222-2222-2222-222222222222';
+  const fresh={id:book,originalName:'NEW.xlsx',sheet:0,offset:0,rows:[],columns:['A'],sheets:[{name:'Sheet',rows:0,columns:1}]};
+  const reads=[];
+  const f=fixture(path=>{
+    reads.push(path);
+    if(path==='/api/runtime')return {ownership:'USER',loginFirst:true,rrContext:{id:generation,jobId:null,workbookId:book}};
+    if(path==='/api/workbooks/'+book)return fresh;
+    assert.fail('Obsolete selection must not be read: '+path);
+  },{storage:new Map([['rrJobId','old-job'],['rrWorkbookId','old-book'],['rrTargetName','OLD event']]),history:[{id:'old-job',status:'STOPPED'}]});
+  await turn();await turn();
+  assert.match(f.get('workbookName').textContent,/NEW.xlsx/);assert.equal(f.get('eventName').value,'');
+  assert.equal(f.storage.get('rrContextId'),generation);assert.equal(f.storage.has('rrJobId'),false);
+  assert.equal(f.get('results').hidden,true);assert.equal(f.get('stage').textContent,'UPLOAD');
+  assert.ok(!reads.some(p=>p.includes('old-job')||p.includes('old-book')));
+});
+
+test('file replacement prepares cleanup without committing a reset until the new preview succeeds', async () => {
+  const id='11111111-1111-1111-1111-111111111111',job='22222222-2222-2222-2222-222222222222',book='33333333-3333-3333-3333-333333333333';
+  const context={id,jobId:job,workbookId:book};const posts=[];
+  const old={id:job,status:'STOPPED',originalName:'OLD.xlsx'};
+  const saved={id:book,originalName:'OLD.xlsx',sheet:0,offset:0,rows:[],columns:['A'],sheets:[{name:'Sheet',rows:0,columns:1}]};
+  const f=fixture((path,options)=>{
+    if(options?.method){posts.push(path);if(path==='/api/new-rr'){assert.equal(JSON.parse(options.body).prepareUpload,true);return {cleared:true,rrContext:context};}throw new Error('Invalid workbook');}
+    if(path==='/api/runtime')return {ownership:'USER',loginFirst:true,rrContext:context};
+    if(path.startsWith('/api/workbooks/'))return saved;
+    return response(path,old);
+  },{storage:new Map([['rrContextId',id],['rrJobId',job],['rrWorkbookId',book],['rrTargetName','Selected Event']]),history:[old]});
+  await turn();f.get('rr').files=[{name:'broken.xlsx'}];await f.get('rr').onchange();
+  assert.deepEqual(posts,['/api/new-rr','/api/workbooks']);assert.equal(f.storage.get('rrContextId'),id);
+  assert.equal(f.storage.get('rrJobId'),job);assert.equal(f.storage.get('rrWorkbookId'),book);
+  assert.equal(f.get('eventName').value,'Selected Event');assert.match(f.get('message').textContent,/Invalid workbook/);
+});
+
+for (const operation of ['sheet read','draft save']) test(`late ${operation} cannot repopulate a server-reset context`, async () => {
+  const id='11111111-1111-1111-1111-111111111111',next='22222222-2222-2222-2222-222222222222',book='33333333-3333-3333-3333-333333333333';
+  let context={id,jobId:null,workbookId:book},delay=false;
+  const gate=deferred();const saved={id:book,originalName:'OLD.xlsx',sheet:0,offset:0,rows:[],columns:['A'],sheets:[{name:'Sheet',rows:0,columns:1}]};
+  const f=fixture((path,options)=>{
+    if(path==='/api/runtime')return {ownership:'USER',loginFirst:true,rrContext:context};
+    if(path.startsWith('/api/workbooks/')){if(delay){delay=false;return gate.promise;}return saved;}
+    assert.fail(path);
+  },{storage:new Map([['rrContextId',id],['rrWorkbookId',book]])});
+  await turn();delay=true;
+  let pending;
+  if(operation==='draft save'){vm.runInContext('edits.set("A1","draft")',f.context);pending=f.get('saveWorkbook').onclick();}
+  else pending=vm.runInContext('loadSheet(0,0)',f.context);
+  assert.equal(vm.runInContext('draftLoading',f.context),true);
+  context={id:next,jobId:null,workbookId:null};await vm.runInContext('refresh()',f.context);
+  gate.resolve(saved);await pending;
+  assert.equal(f.storage.get('rrContextId'),next);assert.equal(f.storage.has('rrWorkbookId'),false);
+  assert.equal(vm.runInContext('workbook',f.context),null);assert.equal(vm.runInContext('draftLoading',f.context),false);
+  assert.equal(f.get('workbookName').textContent,'No RR selected');assert.equal(f.get('rr').disabled,false);
+});
+
 test('failed New RR keeps current job and workbook selected for reconciliation; no new upload',async()=>{
   const posts=[];const f=fixture((path,options)=>{if(options?.method){posts.push(path);throw new Error('cleanup requires reconciliation');}return response(path,{id:'job',status:'RUNNING',phase:'EXECUTING'});});
   await turn();f.storage.set('rrWorkbookId','old-workbook');vm.runInContext('workbook={id:"old-workbook",rows:[],offset:0,sheet:0,sheets:[{rows:0}]}',f.context);
@@ -251,6 +593,40 @@ test('late workbook restoration after Clear cannot repopulate the blank form',as
   const f=fixture(path=>{if(path.startsWith('/api/workbooks/')){restoring=true;return gate.promise;}if(path==='/api/new-rr')return {cleared:true};return response(path,null);},{storage});
   await turn();assert.equal(restoring,true);await f.get('newRR').onclick();gate.resolve({id:'old'});await turn();
   assert.equal(vm.runInContext('workbook',f.context),null);assert.equal(storage.size,0);assert.equal(f.get('workbookName').textContent,'No RR selected');
+});
+
+test('workbook saves include the current generation only when the backend requires it',async()=>{
+  for(const required of [true,false]){
+    const id='11111111-1111-4111-8111-111111111111',bookId='22222222-2222-4222-8222-222222222222';
+    let book={id:bookId,originalName:'Fixture.xlsx',sha256:'before',revision:0,sheet:0,offset:0,columns:['A'],rows:[[{value:'Original'}]],sheets:[{name:'Fixture',rows:1,columns:1}]};
+    const posts=[],storage=new Map([['rrWorkbookId',bookId],...(required?[['rrContextId',id]]:[])]);
+    const f=fixture((path,options)=>{
+      if(options?.method){posts.push({path,body:JSON.parse(options.body)});book={...book,revision:1,sha256:'after'};return book;}
+      if(path==='/api/runtime')return {ownership:'USER',loginFirst:true,workbookSaveContextRequired:required,...(required?{rrContext:{id,workbookId:bookId,jobId:null}}:{})};
+      return path.startsWith('/api/workbooks/')?book:null;
+    },{storage});
+    await turn();vm.runInContext('edits.set("A1","Changed");renderControls()',f.context);
+    assert.equal(f.get('saveWorkbook').disabled,false);await f.get('saveWorkbook').onclick();
+    assert.equal(posts.length,1);assert.equal(posts[0].path,`/api/workbooks/${bookId}/save`);
+    assert.equal(posts[0].body.contextId,required?id:undefined);assert.equal(posts[0].body.sha256,'before');
+    assert.equal(vm.runInContext('edits.size',f.context),0);
+  }
+});
+
+test('legacy cached workbook without a confirmed generation cannot send a save to a guarded backend',async()=>{
+  const bookId='22222222-2222-4222-8222-222222222222';
+  const book={id:bookId,originalName:'Fixture.xlsx',sha256:'old',revision:0,sheet:0,offset:0,columns:['A'],rows:[[{value:'Original'}]],sheets:[{name:'Fixture',rows:1,columns:1}]};
+  const posts=[];
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return path==='/api/runtime'?{ownership:'USER',loginFirst:true,workbookSaveContextRequired:true,rrContext:null}:path.startsWith('/api/workbooks/')?book:null;},{storage:new Map([['rrWorkbookId',bookId]])});
+  await turn();vm.runInContext('edits.set("A1","Unsaved");renderControls()',f.context);
+  assert.equal(f.get('saveWorkbook').disabled,true);assert.match(f.get('editStatus').textContent,/context is unconfirmed/);
+  await f.get('saveWorkbook').onclick();assert.deepEqual(posts,[]);assert.equal(vm.runInContext('edits.size',f.context),1);
+});
+
+test('production workbook saves are wired to the controller generation guard',async()=>{
+  const server=await readFile(new URL('../app/server.mjs',import.meta.url),'utf8');
+  assert.ok(server.includes('withSave: connection.withWorkbookSave'));
+  assert.ok(server.includes('workbookSaveContextRequired: true'));
 });
 
 test('Start Build binds the named target and starts a fresh job once', async () => {
@@ -339,6 +715,45 @@ test('USER ownership shows RETURN TO AGENT but cannot resume a job that is not w
   assert.equal(posts, 0);
 });
 
+test('model-error pause is visible on refresh, retains human control and hides an older report without prompting',async()=>{
+  const posts=[];
+  const record={id:'job',status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'operator',pauseId:'error-pause',pauseReason:'model_failure',modelFailure:{category:'MODEL_TRANSPORT_FAILED',message:'Native model request failed with a transport error.'},lastAssistantText:'Native model request failed. Browser retained; no automatic retry.'};
+  const f=fixture((path,options)=>{if(options?.method)posts.push(path);return path==='/api/runtime'?{ownership:'USER',operatorPauseSupported:true,browserStopped:false}:response(path,record);});
+  await turn();assert.equal(f.get('status').textContent,'MODEL ERROR · PAUSED');assert.equal(f.get('take').disabled,false);
+  assert.equal(f.get('browserFrame').classList.contains('user-control'),true);assert.equal(f.get('results').hidden,true);
+  assert.match(f.get('browserControlMessage').textContent,/no automatic retry/);
+  await vm.runInContext('refresh()',f.context);assert.deepEqual(posts,[]);
+});
+
+test('capable UI pauses and Returns the same job with its current pause token, without changing target', async () => {
+  let ownership='AGENT',record={id:'job',requestedEventName:'Selected Event',status:'RUNNING',phase:'EXECUTING',aiStartedAt:'2026-09-29T01:00:00Z'};
+  const posts=[];
+  const f=fixture((path,options)=>{
+    if(options?.method==='POST'){
+      const body=JSON.parse(options.body);posts.push({path,body});
+      if(path==='/api/take-control'){ownership='USER';record={...record,phase:'AWAITING_INPUT',waitingFor:'operator',pauseId:'pause-token'};return {paused:true,browserRetained:true};}
+      if(path==='/api/jobs/job/resume'){ownership='AGENT';record={...record,phase:'EXECUTING',waitingFor:null,pauseId:null};return {resumed:true};}
+    }
+    return path==='/api/runtime'?{ownership,loginFirst:true,operatorPauseSupported:true,browserStopped:false}:response(path,record);
+  });
+  await turn();await f.get('take').onclick();
+  assert.equal(posts[0].body.jobId,'job');assert.equal(posts[0].body.contextId,null);
+  assert.equal(f.get('status').textContent,'PAUSED · HUMAN CONTROL');assert.equal(f.get('take').disabled,false);
+  assert.match(f.get('browserControlMessage').textContent,/same browser is retained/);assert.equal(f.get('sendAnswer').hidden,true);
+  assert.equal(f.get('eventName').disabled,true);assert.equal(f.get('loginDone').textContent,'RETURN TO SAME BUILD');
+  await f.get('take').onclick();assert.equal(posts[1].path,'/api/jobs/job/resume');
+  assert.deepEqual(posts[1].body,{returnControl:true,pauseId:'pause-token'});assert.equal(posts.length,2);
+  assert.equal(f.get('take').textContent,'TAKE CONTROL');assert.equal(f.get('browserFrame').classList.contains('user-control'),false);
+});
+
+test('a paused UI never enables Return without backend capability and does not expose a pausing browser', async()=>{
+  for(const [phase,capability] of [['AWAITING_INPUT',false],['PAUSING',true],['RETURNING',true]]){
+    const f=fixture(path=>path==='/api/runtime'?{ownership:'USER',operatorPauseSupported:capability}:response(path,{id:'job',status:'RUNNING',phase,waitingFor:phase==='AWAITING_INPUT'?'operator':null,pauseId:'token'}));
+    await turn();assert.equal(f.get('take').disabled,true);
+    if(phase!=='AWAITING_INPUT')assert.equal(f.get('browserFrame').classList.contains('user-control'),false);
+  }
+});
+
 test('Take Control is double-submit safe and toggles to RETURN TO AGENT only after handoff settles', async () => {
   const gate = deferred(); let takes = 0, ownership = 'AGENT';
   const f = fixture(async (path) => {
@@ -355,6 +770,18 @@ test('Take Control is double-submit safe and toggles to RETURN TO AGENT only aft
   assert.equal(f.get('browserFrame').classList.contains('user-control'), true);
   assert.equal(f.get('take').textContent, 'RETURN TO AGENT');
   assert.match(f.get('browserControlMessage').textContent, /active RR was stopped/);
+});
+
+test('busy Take Control reports that execution continues and never pretends the browser was handed over',async()=>{
+  const posts=[];const notice='Pi is finishing an operation. Nothing was paused or stopped. Let it finish before taking control, or use Stop Build to end this run.';
+  const f=fixture((path,options)=>{
+    if(options?.method){posts.push(path);throw new Error(notice);}
+    return path==='/api/runtime'?{ownership:'AGENT',operatorPauseSupported:true,browserStopped:false}:response(path,{id:'job',status:'RUNNING',phase:'EXECUTING'});
+  });
+  await turn();await f.get('take').onclick();
+  assert.deepEqual(posts,['/api/take-control']);assert.equal(f.get('status').textContent,'Running');
+  assert.equal(f.get('take').textContent,'TAKE CONTROL');assert.equal(f.get('browserFrame').classList.contains('user-control'),false);
+  assert.match(f.get('browserControlMessage').textContent,/Nothing was paused or stopped/);assert.equal(f.get('stop').disabled,false);
 });
 
 test('failed Take Control stays watch-only and shows the error next to the browser', async () => {
@@ -429,14 +856,45 @@ test('execution status uses observed metadata instead of stale inventory or secu
   assert.equal(f.get('agentReply').textContent,'');assert.equal(f.get('securityConfirmation').hidden,true);
   assert.match(f.get('completionCount').textContent,/not independent acceptance/);assert.match(f.get('activity').children[0].textContent,/2030.*bash started/);
 });
-test('finished and historical runs show execution results, never a mandatory review label',async()=>{
+test('terminal run labels distinguish processing finished, verified complete, legacy uncertainty and Stop',async()=>{
   for(const status of ['DONE','INCOMPLETE','FINISHED','REVIEW_REQUIRED','STOPPED','STOPPED_REQUIRES_REVIEW']){
     const f=fixture(path=>path==='/api/runtime'?{ownership:'USER'}:path.endsWith('/results/state.json')?{completed:['saved-object'],currentAction:'Review required'}:response(path,{id:'job',status,reviewRequired:'Review saved results',lastAssistantText:'Created one item; another is blocked.'}));
     await turn();
-    assert.equal(f.get('status').textContent,status.includes('STOPPED')?'STOPPED':status==='DONE'?'DONE':'INCOMPLETE');
-    for(const id of ['status','stage','action','completionTitle'])assert.doesNotMatch(f.get(id).textContent,/review|required/i);
+    const expected=status.includes('STOPPED')?'Stopped':status==='DONE'?'Done — verified complete':status==='INCOMPLETE'?'Done — unfinished items':'Ended — completion unverified';
+    for(const id of ['status','stage','completionTitle'])assert.equal(f.get(id).textContent,expected);
+    assert.equal(f.get('outcomeSummary').hidden,false);
+    assert.match(f.get('outcomeSummary').textContent,status==='DONE'?/human decision/:/not completion|not that every requirement|historical run/);
+    if(status!=='DONE'){assert.equal(f.get('progressLists').hidden,false);assert.match(f.get('pending').children[0].textContent,/not itemized/);}
     assert.match(f.get('agentReply').textContent,/Created one item/);
     assert.equal(f.get('take').disabled,true);
+  }
+});
+test('Done with unfinished RR values shows concrete notes and Clear removes all prior outcome text',async()=>{
+  const record=Object.freeze({id:'job',status:'INCOMPLETE',lastAssistantText:'Skipped the missing banner; registration was configured.'});
+  const progress={requirements:[{id:'banner',label:'Banner image',status:'blocked',reason:'Missing file at Website!B4'},{id:'price',label:'Admission fee',status:'unverified',reason:'Missing amount at Pricing!C9'}]};
+  const posts=[],f=fixture((path,options)=>{if(options?.method){posts.push(path);return {cleared:true};}return path==='/api/runtime'?{...runtime,ownership:'USER',browserStopped:true}:path.endsWith('/results/state.json')?progress:response(path,record);});
+  await turn();assert.equal(f.get('status').textContent,'Done — unfinished items');assert.equal(f.get('completionMark').textContent,'!');
+  assert.equal(f.get('pendingTitle').textContent,'Unfinished work / needs input');assert.match(f.get('pending').children[0].textContent,/Missing file at Website!B4/);
+  assert.match(f.get('pending').children[1].textContent,/Missing amount at Pricing!C9/);assert.equal(f.get('progressLists').hidden,false);
+  assert.equal(f.get('take').disabled,true);assert.equal(record.status,'INCOMPLETE');assert.equal(posts.length,0);
+  await f.get('newRR').onclick();await turn();assert.equal(f.get('outcomeSummary').hidden,true);assert.equal(f.get('outcomeSummary').textContent,'');
+  assert.equal(f.get('status').textContent,'Not running');assert.equal(f.get('completionMark').textContent,'•');assert.equal(f.get('pendingTitle').textContent,'Remaining / blocked');
+});
+test('lifecycle milestones follow browser/login/AI evidence, not legacy intake or completion labels',async()=>{
+  const browser={runtimeId:'runtime',steelSessionId:'steel',activeTargetId:'page'},verified={target:{apiEventId:'event'},apiPreflight:{eventId:'event'}};
+  const cases=[
+    [{status:'UPLOADED',intake:{summary:'Old intake'}},[true,false,false,false]],
+    [{status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup',browser},[true,true,false,false]],
+    [{status:'RUNNING',phase:'AWAITING_INPUT',waitingFor:'setup',browser,...verified},[true,true,true,false]],
+    [{status:'RUNNING',phase:'EXECUTING',browser,...verified,aiStartedAt:'2026-10-02T12:00:00Z'},[true,true,true,true]],
+    ...['DONE','INCOMPLETE','STOPPED'].map(status=>[{status,phase:'SETTLED',browser,...verified,aiStartedAt:'2026-10-02T12:00:00Z'},[true,true,true,true]]),
+    [{status:'STOPPED',phase:'SETTLED',intake:{summary:'Old intake'},aiStartedAt:'invalid'},[true,false,false,false]],
+  ];
+  for(const [fields,expected] of cases){
+    const f=fixture(path=>response(path,{id:'job',workflow:'login-first',...fields}));await turn();
+    assert.deepEqual([1,2,3,4].map(n=>f.get(`step${n}`).classList.contains('done')),expected,JSON.stringify(fields));
+    if(fields.status==='INCOMPLETE')assert.equal(f.get('status').textContent,'Done — unfinished items');
+    if(fields.status==='STOPPED')assert.equal(f.get('status').textContent,'Stopped');
   }
 });
 test('settled status does not display an old running action or claim live browser health',async()=>{

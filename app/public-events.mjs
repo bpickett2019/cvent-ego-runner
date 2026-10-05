@@ -1,3 +1,16 @@
+// Project terminal model failures to fixed public text, never provider payloads,
+// partial assistant content, URLs, credentials or diagnostic details.
+export function nativeModelFailure(message) {
+  if (message?.role !== 'assistant') return null;
+  if (message.stopReason === 'aborted') return { category: 'MODEL_REQUEST_ABORTED', message: 'Native model request was aborted.' };
+  if (message.stopReason !== 'error') return null;
+  const transport = message.errorMessage === 'WebSocket error' || (Array.isArray(message.diagnostics)
+    && message.diagnostics.some(diagnostic => diagnostic?.type === 'provider_transport_failure'));
+  return transport
+    ? { category: 'MODEL_TRANSPORT_FAILED', message: 'Native model request failed with a transport error.' }
+    : { category: 'MODEL_REQUEST_FAILED', message: 'Native model request failed.' };
+}
+
 export function activitySummary(event) {
   if (event.type === 'tool_execution_start') return `${event.tool} started`;
   if (event.type === 'tool_execution_end') return `${event.tool} ${event.outcome}; not saved-result verification`;

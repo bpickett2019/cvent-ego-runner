@@ -5,15 +5,20 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { apiOperationBlocked, API_GUARD_FILE } from '../app/api-operation-lease.mjs';
 
 const eventId = "11111111-1111-1111-1111-111111111111", discountId = "22222222-2222-2222-2222-222222222222";
 const row = { id: discountId, level: "EVENT", type: "DISCOUNT_CODE", name: "Test", code: "EXISTING", active: false, stackable: false, method: { type: "BY_PERCENTAGE", value: 10 }, note: "Original", audienceType: "ALL", includeGuestsTowardsCapacity: false, autoApply: false, applyToAllAgendaItems: false, capacity: { total: 100, used: 0 } };
-const event = { id: eventId, title: "(C+D) Test", status: "Pending" };
+const event = { id: eventId, title: "Discount CLI Test", status: "Pending" };
 const request = { rrReferences: ["Discounts!B2"], data: { code: "EXISTING", patch: { note: "Requested" } } };
 const createRequest = { rrReferences: ["Discounts!B3"], data: { code: "NEW", createIfMissing: true, patch: { name: "New test", active: false, stackable: false, method: { type: "BY_PERCENTAGE", value: 10 }, note: "Requested", audienceType: "ALL", includeGuestsTowardsCapacity: false, autoApply: false, capacity: { total: 100 } } } };
 async function setup(t, existing = false) {
-  const dir = await mkdtemp(join(tmpdir(), "discount-cli-")); t.after(() => rm(dir, { recursive: true, force: true }));
-  await writeFile(join(dir, "job.json"), JSON.stringify({ status: "RUNNING", target: { apiEventId: eventId, name: event.title } }));
+  const dir = await mkdtemp(join(tmpdir(), "discount-cli-")), children = [];
+  t.after(async()=>{
+    for(const {child,done} of children){if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await done;}
+    await rm(dir,{recursive:true,force:true});
+  });
+  await writeFile(join(dir, "job.json"), JSON.stringify({ status: "RUNNING", apiOperationLocking: 'kernel-flock-v1', target: { apiEventId: eventId, name: event.title } }));
   await writeFile(join(dir, "runtime.json"), JSON.stringify({ ownership: "AGENT" }));
   await writeFile(join(dir, "remote.json"), JSON.stringify(existing ? row : null));
   await writeFile(join(dir, "links.json"), '[]');
@@ -22,15 +27,27 @@ async function setup(t, existing = false) {
   await writeFile(preload, `
 import assert from 'node:assert/strict';
 import {readFile,writeFile,appendFile} from 'node:fs/promises';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 const dir=${JSON.stringify(dir)}, event=${JSON.stringify(event)};
 const timer=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>timer(fn,Math.min(ms,1),...args);
 const json=v=>new Response(JSON.stringify(v),{status:200});let scans=0;
+if(process.env.TEST_STOP_ON_LOCK){
+ const spawn=childProcess.spawnSync;
+ childProcess.spawnSync=(...args)=>{if(args[0]==='python3'){const path=dir+'/job.json';fs.writeFileSync(path,JSON.stringify({...JSON.parse(fs.readFileSync(path,'utf8')),status:'STOPPED'}));}return spawn(...args);};
+ syncBuiltinESMExports();
+}
 globalThis.fetch=async(input,init={})=>{
  const u=new URL(input),m=init.method||'GET';
  assert.equal(u.origin,'https://api-platform.cvent.com');
  await appendFile(dir+'/requests.log',m+' '+u.pathname+'\\n');
  if(u.pathname==='/ea/oauth2/token')return json({access_token:'dummy-token',expires_in:3600});
- if(u.pathname==='/ea/events/${eventId}'){assert.equal(m,'GET');return json(event)}
+ if(u.pathname==='/ea/events/${eventId}'){
+  assert.equal(m,'GET');
+  if(process.env.TEST_HOLD_READ){await writeFile(dir+'/held.json','READ');await new Promise(()=>setInterval(()=>{},1000));}
+  return json(event);
+ }
  const base='/ea/events/${eventId}/discounts';
  const original=JSON.parse(await readFile(dir+'/remote.json'));
  const itemId='33333333-3333-3333-3333-333333333333';
@@ -60,6 +77,7 @@ globalThis.fetch=async(input,init={})=>{
  if(m==='POST'){
   assert.equal(original,null,'never create over an existing code');
   await appendFile(dir+'/writes.log','POST\\n');
+  if(process.env.TEST_HOLD_WRITE){await writeFile(dir+'/held.json','WRITE');await new Promise(()=>setInterval(()=>{},1000));}
   const body=JSON.parse(init.body);
   const saved={...body,id:'${discountId}',level:'EVENT',...(body.type==='VOLUME_DISCOUNT'?{}:{capacity:{...body.capacity,used:0}})};
   if(!process.env.TEST_STALE)await writeFile(dir+'/remote.json',JSON.stringify(saved));
@@ -70,16 +88,71 @@ globalThis.fetch=async(input,init={})=>{
  return json({data:process.env.TEST_HIDE||!original?[]:[original]});
 };
 `);
-  async function run(operation = "configureDiscount", input = createRequest, flags = {}) {
-    return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ["--import", preload, new URL("../app/cvent-api-cli.mjs", import.meta.url).pathname, operation], { env: { ...process.env, CVENT_CREDENTIALS_FILE: "", CVENT_API_BASE_URL: "https://api-platform.cvent.com/ea", CVENT_CLIENT_ID: "dummy-id", CVENT_CLIENT_SECRET: "dummy-secret", RR_WORKSPACE: dir, TEST_STALE: "", TEST_HIDE: "", TEST_TAKEOVER: "", TEST_LINK_TAKEOVER: "", TEST_FOREIGN_INTENT: "", TEST_LINK_STALE: "", TEST_LINK_DENIED: "", TEST_FINAL_STALE: "", ...flags }, stdio: ["pipe", "pipe", "pipe"] });
+  function launch(operation = "configureDiscount", input = createRequest, flags = {}) {
+    let child;
+    const done = new Promise((resolve, reject) => {
+      child = spawn(process.execPath, ["--import", preload, new URL("../app/cvent-api-cli.mjs", import.meta.url).pathname, operation], { env: { ...process.env, CVENT_CREDENTIALS_FILE: "", CVENT_API_BASE_URL: "https://api-platform.cvent.com/ea", CVENT_CLIENT_ID: "dummy-id", CVENT_CLIENT_SECRET: "dummy-secret", RR_WORKSPACE: dir, TEST_STALE: "", TEST_HIDE: "", TEST_TAKEOVER: "", TEST_LINK_TAKEOVER: "", TEST_FOREIGN_INTENT: "", TEST_LINK_STALE: "", TEST_LINK_DENIED: "", TEST_FINAL_STALE: "", TEST_HOLD_READ: "", TEST_HOLD_WRITE: "", TEST_STOP_ON_LOCK: "", ...flags }, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "", stderr = ""; child.stdout.on("data", c => stdout += c); child.stderr.on("data", c => stderr += c);
-      child.on("error", reject); child.on("close", code => resolve({ code, stdout, stderr })); child.stdin.end(JSON.stringify(input));
+      child.on("error", reject); child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr })); child.stdin.end(JSON.stringify(input));
     });
+    children.push({child,done}); // Children settle before disposable files are removed.
+    return {child,done};
   }
+  const run = (...args) => launch(...args).done;
   const receipts = async () => Promise.all((await readdir(join(dir, "receipts"))).filter(f => f.endsWith(".json")).map(async f => JSON.parse(await readFile(join(dir, "receipts", f)))));
-  return { dir, run, receipts };
+  return { dir, run, launch, receipts };
 }
+async function waitHeld(f) {
+  for(let i=0;i<200&&!existsSync(join(f.dir,'held.json'));i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(existsSync(join(f.dir,'held.json')),true,'mock network request reached its barrier');
+}
+
+test('forced read termination leaves read evidence, not an orphan ownership blocker',async t=>{
+  const f=await setup(t),running=f.launch('listDiscounts',{}, {TEST_HOLD_READ:'1'});await waitHeld(f);
+  assert.equal(apiOperationBlocked(f.dir),true);
+  const before=await readFile(join(f.dir,'requests.log'),'utf8');
+  const conflict=await f.run('listDiscounts',{});assert.equal(conflict.code,1);assert.equal(await readFile(join(f.dir,'requests.log'),'utf8'),before);
+  const started=(await f.receipts())[0];assert.equal(started.status,'READ_STARTED');assert.equal(started.access,'api-read');assert.equal(started.ownership.mechanism,'kernel-flock-v1');
+  running.child.kill('SIGKILL');assert.equal((await running.done).signal,'SIGKILL');
+  assert.equal(apiOperationBlocked(f.dir),false);assert.equal(existsSync(join(f.dir,API_GUARD_FILE)),true);
+  assert.deepEqual((await f.receipts())[0],started,'interrupted read is not promoted to PASS or erased');
+  assert.equal(existsSync(join(f.dir,'api-operation.lock')),false);assert.equal(existsSync(join(f.dir,'api-write-uncertain.json')),false);
+  assert.equal((await f.run('listDiscounts',{})).code,0,'explicit later read can acquire the free guard');
+});
+
+test('forced write termination releases OS ownership but preserves uncertainty and blocks replay',async t=>{
+  const f=await setup(t),running=f.launch('configureDiscount',createRequest,{TEST_HOLD_WRITE:'1'});await waitHeld(f);
+  const marker=await readFile(join(f.dir,'api-write-uncertain.json'),'utf8');assert.equal(apiOperationBlocked(f.dir),true);
+  const receipt=(await f.receipts())[0];assert.equal(receipt.status,'INTENT_REQUIRES_RECONCILIATION');
+  running.child.kill('SIGKILL');await running.done;assert.equal(apiOperationBlocked(f.dir),false);
+  const requests=await readFile(join(f.dir,'requests.log'),'utf8');
+  assert.equal((await f.run()).code,1);assert.equal(await readFile(join(f.dir,'requests.log'),'utf8'),requests);
+  assert.equal(await readFile(join(f.dir,'api-write-uncertain.json'),'utf8'),marker);assert.deepEqual((await f.receipts())[0],receipt);
+});
+
+test('Stop between initial validation and kernel acquisition prevents any authentication or API request',async t=>{
+  const f=await setup(t),result=await f.run('listDiscounts',{}, {TEST_STOP_ON_LOCK:'1'});
+  assert.equal(result.code,1);assert.match(result.stderr,/Stop, takeover/);assert.equal(existsSync(join(f.dir,'requests.log')),false);
+  assert.equal(apiOperationBlocked(f.dir),false);assert.equal((await f.receipts())[0].status,'BLOCKED');
+});
+
+test('new CLI refuses old or unknown job protocols before authentication or guard creation',async t=>{
+  const f=await setup(t),path=join(f.dir,'job.json'),job=JSON.parse(await readFile(path,'utf8'));
+  for(const apiOperationLocking of [undefined,'unknown']){
+    const before=JSON.stringify({...job,apiOperationLocking});await writeFile(path,before);
+    const result=await f.run('listDiscounts',{});assert.equal(result.code,1);assert.match(result.stderr,/compatible API ownership/);
+    assert.equal(await readFile(path,'utf8'),before);
+  }
+  assert.equal(existsSync(join(f.dir,'requests.log')),false);assert.equal(existsSync(join(f.dir,API_GUARD_FILE)),false);
+});
+
+test('legacy API locks are never migrated, deleted or bypassed by the new CLI',async t=>{
+  const f=await setup(t),path=join(f.dir,'api-operation.lock');await writeFile(path,'legacy evidence');
+  const result=await f.run('listDiscounts',{});assert.equal(result.code,1);assert.match(result.stderr,/Legacy/);
+  assert.equal(await readFile(path,'utf8'),'legacy evidence');assert.equal(existsSync(join(f.dir,'requests.log')),false);
+  assert.equal(existsSync(join(f.dir,API_GUARD_FILE)),false);
+});
+
 test('current-run uncertain API writes still block mutation before network access and permit reads', async t => {
   const f = await setup(t);
   const marker = '{"status":"UNCERTAIN","intent":"this-run"}';
@@ -100,7 +173,7 @@ test('browser save uncertainty blocks API writes before network but permits read
   assert.equal(await readFile(join(f.dir, 'browser-save-uncertain.json'), 'utf8'), marker);
 });
 
-test("CLI advertises scoped event updates and explains protected shared operations", async t => {
+test("RR CLI advertises only discount writes and explains its narrower route policy", async t => {
   const f = await setup(t), result = await f.run("capabilities");
   assert.equal(result.code, 0, result.stderr);
   const capabilities = JSON.parse(result.stdout);
@@ -110,21 +183,48 @@ test("CLI advertises scoped event updates and explains protected shared operatio
   assert.equal(capabilities.operations.listDiscounts, "api-read");
   assert.equal(capabilities.operations.listQuantityItems, "api-read");
   assert.match(capabilities.writeCapabilities.configureDiscount.supports.join(' '), /item-scoped/);
-  for (const operation of ["updateEvent", "updateEventBasics", "updateRegistrationType", "enableEventFeature"]) assert.equal(capabilities.operations[operation], 'api-write');
+  assert.deepEqual(Object.entries(capabilities.operations).filter(([,mode])=>mode==='api-write').map(([name])=>name), ['configureDiscount','configureVolumeDiscount']);
+  assert.deepEqual(Object.keys(capabilities.writeCapabilities), ['configureDiscount','configureVolumeDiscount']);
+  for (const operation of ["updateEvent", "updateEventBasics", "updateRegistrationType", "enableEventFeature"]) {
+    assert.equal(capabilities.operations[operation], undefined);assert.equal(capabilities.writeCapabilities[operation], undefined);
+    assert.match(capabilities.blockedOperations[operation], /RR jobs permit only discount API writes/);
+  }
   for (const operation of ['updateEventCustomFieldAnswers', 'createContactType', 'createCustomField', 'listSessions']) {
     assert.equal(capabilities.operations[operation], undefined); assert.ok(capabilities.blockedOperations[operation]);
   }
   assert.equal(existsSync(join(f.dir, "requests.log")), false);
 });
-test("CLI blocks shared/integration operations before network; event rename before mutation", async t => {
+test("RR CLI blocks shared/integration and non-discount writes before network or receipt creation", async t => {
   const f = await setup(t, true);
   for (const operation of ['updateEventCustomFieldAnswers', 'createCustomField', 'createContactType', 'listSessions']) assert.equal((await f.run(operation, {})).code, 1);
   assert.equal(existsSync(join(f.dir, 'requests.log')), false);
   for (const operation of ['updateEvent', 'updateEventBasics', 'updateRegistrationType']) assert.equal((await f.run(operation, { rrReferences: ['Event!B2'], data: { title: 'Renamed' } })).code, 1);
-  for (const receipt of await f.receipts()) assert.equal(receipt.status, 'BLOCKED');
+  assert.equal(existsSync(join(f.dir, 'receipts')), false);
+  assert.equal(existsSync(join(f.dir, 'requests.log')), false);
   assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'remote.json'))), row);
   for (const file of ['writes.log', 'api-write-uncertain.json', 'api-operation.lock']) assert.equal(existsSync(join(f.dir, file)), false);
 });
+test('non-discount route denial precedes workspace/credential access and ignores caller permission overrides', async t => {
+  const f=await setup(t);
+  for(const operation of ['updateEvent','updateEventBasics','updateRegistrationType','enableEventFeature']){
+    for(const RR_WORKSPACE of ['',join(f.dir,'absent-job'),f.dir]){
+      const result=await f.run(operation,{authorizedOperations:[operation],scope:'all',rrReferences:['RR!A1'],data:{note:'not a grant'}},
+        {RR_WORKSPACE,CVENT_CREDENTIALS_FILE:join(f.dir,'absent-credentials'),CVENT_API_WRITE_SCOPE:'all',CVENT_API_ADMIN:'true'});
+      assert.equal(result.code,1);assert.match(result.stderr,/RR jobs permit only discount API writes/);
+      assert.equal(result.stdout,'');
+    }
+  }
+  for(const file of ['requests.log','writes.log','receipts','api-operation.lock','api-write-uncertain.json'])assert.equal(existsSync(join(f.dir,file)),false,file);
+});
+
+test('unknown, case-altered and prototype operation names cannot widen the RR write policy',async t=>{
+  const f=await setup(t);
+  for(const operation of ['UpdateEvent','updateEvent ','configureEverything','constructor','__proto__','configureDiscount/../updateEvent']){
+    const result=await f.run(operation,{});assert.equal(result.code,1);assert.equal(result.stdout,'');
+  }
+  assert.equal(existsSync(join(f.dir,'requests.log')),false);assert.equal(existsSync(join(f.dir,'receipts')),false);
+});
+
 test("CLI updates an existing event code with durable intent, saved verification and no duplicate creation", async t => {
   const f = await setup(t, true), result = await f.run('configureDiscount', request);
   assert.equal(result.code, 0, result.stderr);

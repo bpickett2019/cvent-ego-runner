@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { ApiFailure, CventConnection } from "./cvent-api.mjs";
 import { assertProcessGone } from "./event-history.mjs";
+import { apiOperationBlocked } from "./api-operation-lease.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const read = async path => JSON.parse(await readFile(path, "utf8"));
@@ -17,7 +18,7 @@ const save = async (path, value) => {
 // Maintenance-only access check. It deliberately cannot upload records, start,
 // cancel, inspect someone else's job, or accept caller-supplied destinations.
 export async function probeEmptyBulkJob({ api, target, checkControl, record }) {
-  if (!UUID.test(target?.apiEventId) || !target.name?.startsWith("(C+D)")) throw new ApiFailure("Bulk probe requires the selected (C+D) event");
+  if (!UUID.test(target?.apiEventId) || typeof target.name !== 'string' || !target.name.trim() || target.name.length > 300) throw new ApiFailure("Bulk probe requires the selected event UUID and name");
   await checkControl();
   const { receipt: event } = await api.assertTarget(target);
   const { credentials, token } = await api.authenticate();
@@ -59,7 +60,7 @@ export async function runBulkAccessProbe({ root, confirmed = false, env = proces
     const runtime = await read(join(current, "runtime.json"));
     if (runtime.ownership !== "USER" || runtime.runtimeId !== initial.runtimeId || runtime.expectedEventName !== target.name || !isDeepStrictEqual(runtime.apiEvent, initial.apiEvent)) throw new ApiFailure("Bulk maintenance requires idle USER ownership and unchanged selected event");
     for (const workspace of [current, ...(await readdir(jobs)).map(id => join(jobs, id))]) {
-      if (["operation.lock", "api-operation.lock"].some(file => existsSync(join(workspace, file)))) throw new ApiFailure("Unsettled operation blocks bulk maintenance");
+      if (apiOperationBlocked(workspace) || existsSync(join(workspace, "operation.lock"))) throw new ApiFailure("Unsettled operation blocks bulk maintenance");
       if (!existsSync(join(workspace, "job.json"))) continue;
       const job = await read(join(workspace, "job.json"));
       if (["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(job.status) || job.spendingUnreconciled || job.stopFailures?.length) throw new ApiFailure("Unsettled RR job blocks bulk maintenance");

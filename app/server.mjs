@@ -14,7 +14,8 @@ import { mountWorkbooks } from "./workbooks.mjs";
 import { acknowledgeSessionIncident } from "./session-security.mjs";
 import { provisionCleanBrowser, steelOrigin } from "./clean-browser.mjs";
 import { transitionBrowser } from "./browser-ownership.mjs";
-import { executionCleared } from "./execution-clearance.mjs";
+import { executionSafety } from "./execution-clearance.mjs";
+import { createSharedEventSafety, eventHoldInventory, EVENT_SAFETY_PROTOCOL } from "./shared-event-safety.mjs";
 
 // Native Pi and its tools inherit owner-only artifact permissions.
 process.umask(0o077);
@@ -25,9 +26,15 @@ const statePath = resolve(current, "state.json");
 const operationLock = resolve(current, "operation.lock");
 const app = express();
 const cventApi = new CventConnection();
+const sharedWorkspaceSetting = process.env.CVENT_SHARED_WORKSPACE_ID;
+if (sharedWorkspaceSetting !== undefined && !/^[123]$/.test(sharedWorkspaceSetting)) throw new Error('Invalid shared workspace identity');
+const sharedWorkspaceId = sharedWorkspaceSetting === undefined ? undefined : Number(sharedWorkspaceSetting);
+if (process.env.CVENT_CONCURRENT_WORKSPACES !== undefined && process.env.CVENT_CONCURRENT_WORKSPACES !== '3') throw new Error('Invalid concurrent workspace mode');
+const requireEventLease = process.env.CVENT_CONCURRENT_WORKSPACES === '3';
+if (requireEventLease && sharedWorkspaceId === undefined) throw new Error('Concurrent mode requires an assigned workspace');
+const verifyEventSafety = createSharedEventSafety({ workspaceId: sharedWorkspaceId, requireEventLease });
 let targetLookup = false;
 let returningControl = false;
-let browserEpoch = 0;
 const viewerProxy = httpProxy.createProxyServer({ target: "http://127.0.0.1:3400", ws: true, changeOrigin: true });
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));
 const writeJson = async (path, value) => {
@@ -41,7 +48,11 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  if (process.env.CVENT_EXECUTION_ENABLED === 'false' && req.method === 'POST' && (/^\/api\/(?:target|return-agent)$/.test(req.path) || /^\/api\/jobs\/[^/]+\/(?:answer|rpc|start|continue)$/.test(req.path))) return res.status(503).json({ error: 'Paid AI is disabled pending secure credentials and activation checks. Browser preview and Stop remain available.' });
+  if (process.env.CVENT_EXECUTION_ENABLED === 'false' && req.method === 'POST' && (/^\/api\/(?:target|return-agent)$/.test(req.path) || /^\/api\/jobs\/[^/]+\/(?:answer|resume|rpc|start|continue)$/.test(req.path))) return res.status(503).json({ error: 'Paid AI is disabled pending secure credentials and activation checks. Browser preview and Stop remain available.' });
+  next();
+});
+app.use((req, res, next) => {
+  if (sharedWorkspaceId !== undefined && req.method === 'POST' && /^\/api\/(?:target|return-agent)\/?$/i.test(req.path)) return res.status(409).json({ error: 'Shared execution requires the verified job handoff; legacy ownership routes are disabled.' });
   next();
 });
 app.use(express.json({ limit: "100kb" }));
@@ -124,9 +135,24 @@ async function provisionBrowser(record, cancelled) {
   await updateState({ status: "LOGIN_REQUIRED", currentAction: "Clean browser ready; human login required. AI not started." });
   return readJson(runtimePath);
 }
-const connection = mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowser });
-mountWorkbooks(app, { root, isBusy: () => connection.isBusy() });
-app.get("/api/execution-clearance/:id", (req, res) => res.json({ cleared: executionCleared(root, req.params.id) }));
+const connection = mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowser, verifyEventSafety });
+mountWorkbooks(app, { root, isBusy: () => connection.isBusy(), withUpload: connection.withWorkbookUpload, withSave: connection.withWorkbookSave });
+app.get("/api/execution-clearance/:id", (req, res) => res.json(executionSafety(root, req.params.id)));
+app.get('/api/internal/event-holds', (_req, res) => res.json(eventHoldInventory(root, sharedWorkspaceId, { requireEventLease })));
+app.post('/api/internal/concurrent-target', async (req, res) => {
+  if (!requireEventLease || !req.body || Object.keys(req.body).some(k => !['jobId', 'operation', 'eventName'].includes(k))) return res.status(409).json({ error: 'Concurrent target preflight unavailable' });
+  try {
+    const before = connection.admissionTarget(req.body);
+    let eventId = before.eventId;
+    if (!eventId) {
+      const matches = await cventApi.findEvents(before.name);
+      if (matches.length !== 1) throw new Error('Target is missing or ambiguous');
+      eventId = matches[0].id;
+    }
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(eventId) || JSON.stringify(connection.admissionTarget(req.body)) !== JSON.stringify(before)) throw new Error('Target changed');
+    res.json({ protocol: 'workspace-event-target-v1', workspace: sharedWorkspaceId, jobId: before.jobId, contextId: before.contextId, eventId, canRebind: before.canRebind });
+  } catch { res.status(409).json({ error: 'Selected workspace job/event could not be verified; no AI started' }); }
+});
 app.get("/api/state", async (_req, res) => res.json(await readJson(statePath)));
 async function browserStopped(runtime) {
   if (!/^[0-9a-f-]{36}$/.test(runtime.jobId || "")) return false;
@@ -136,7 +162,7 @@ async function browserStopped(runtime) {
 app.get("/api/runtime", async (_req, res) => {
   const runtime = await readJson(runtimePath);
   const { runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent } = runtime;
-  res.json({ loginFirst: true, executionEnabled: process.env.CVENT_EXECUTION_ENABLED !== 'false', budget: connection.budget(), browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
+  res.json({ sharedEventSafety: { protocol: EVENT_SAFETY_PROTOCOL, workspace: sharedWorkspaceId ?? null, enforced: sharedWorkspaceId !== undefined, ...(requireEventLease ? { eventLeasesEnforced: true, concurrentWorkspaces: 3 } : {}) }, loginFirst: true, setupTargetEditable: true, operatorPauseSupported: true, workbookSaveContextRequired: true, workspaceResetSupported: true, rrContext: connection.uiContext(), executionEnabled: process.env.CVENT_EXECUTION_ENABLED !== 'false', budget: connection.budget(), browserStopped: await browserStopped(runtime), runtimeId, activeTargetId, steelSessionId, ownership, targetEventUrl, expectedEventName, resolvedEventName, expectedEvtstub, apiEvent, executionPolicy: RUN_POLICY.executionDescription, executionPolicyId: RUN_POLICY.executionPolicy });
 });
 async function selectTarget(name) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
@@ -144,7 +170,7 @@ async function selectTarget(name) {
   try {
     await writeJson(runtimePath, { ...await readJson(runtimePath), expectedEventName: name, resolvedEventName: null, expectedEvtstub: null, targetEventUrl: null, apiEvent: null });
     const matches = await cventApi.findEvents(name);
-    if (!matches.length) throw new Error("No exact event-name match was found through the Cvent API");
+    if (!matches.length) throw new Error("No exact event-name match was found through the Cvent API. Enter the complete API-visible Cvent name and Return again; your login is unchanged.");
     if (matches.length !== 1) throw new Error("Multiple Cvent API events have that name. A unique event identity must be approved before execution; no event was selected");
     await writeJson(runtimePath, { ...await readJson(runtimePath), apiEvent: matches[0] });
     return { name, resolved: false, apiEvent: matches[0], route: "api" };
@@ -154,19 +180,13 @@ app.post("/api/target", async (req, res) => {
   if (connection.isBusy()) return res.status(409).json({ error: "Cannot change target during an active job" });
   res.json(await selectTarget(eventName(req.body.eventName)));
 });
-app.post("/api/take-control", async (_req, res) => {
-  browserEpoch++;
-  await connection.stop();
-  // Revoke navigation immediately if a Return-to-Agent operation is in flight.
-  await writeJson(runtimePath, { ...await readJson(runtimePath), ownership: "USER" });
-  await waitForIdle();
-  await updateState({ status: "LOGIN_REQUIRED", currentAction: "Human owns the assigned Steel browser" });
-  res.json({ ownership: "USER" });
+app.post("/api/take-control", async (req, res) => {
+  res.json(await connection.takeControl(req.body));
 });
 async function returnAgent(cancelled = () => false) {
   if (targetLookup || returningControl) throw new Error("Wait for the existing browser handoff");
   returningControl = true;
-  const epoch = browserEpoch, revoked = () => cancelled() || epoch !== browserEpoch;
+  const revoked = cancelled;
   let assigned;
   try {
     await waitForIdle();

@@ -6,6 +6,7 @@ import { readSaveSignals } from "./save-observer.mjs";
 const INTERACTIVE_ROLE = /^(button|link|textbox|searchbox|combobox|checkbox|radio|menuitem|option|slider|spinbutton|switch|tab|treeitem)$/i;
 const WRITE_METHOD = /^(Input\.|DOM\.(set|remove)|Page\.navigate|Page\.reload|Target\.(createTarget|closeTarget)|Storage\.(set|clear)|Network\.(set|clear)|Fetch\.continueRequest)/;
 const FORBIDDEN = /\b(publish|go\s+live|send\s+(?:email|invitation)|delete|archive)\b/i;
+const SHARED_CONTACT_CREATE = /\b(?:new\s+contact\s+type|create\s+(?:a\s+|new\s+)?contact\s+type)\b/i;
 const LOGIN_HOST = /(^|\.)(login\.microsoftonline\.com|login\.app\.cvent\.com)$/i;
 
 function eventIdentity(raw) {
@@ -137,6 +138,9 @@ export class SteelEgoHost {
     if (!likelyWrite) return;
     if (existsSync(join(dirname(this.runtimePath), "api-write-uncertain.json"))) throw new Error("GuardrailViolation: an API write is uncertain; browser mutations are blocked until reconciliation");
     if (existsSync(join(dirname(this.runtimePath), "browser-save-uncertain.json"))) throw new Error("BrowserSaveUncertainError: a browser save is uncertain; further mutations are blocked");
+    if (runtime.executionCapabilities?.sharedContactTypeCreation === false && (SHARED_CONTACT_CREATE.test(source) || await this.forbiddenUiLabel(envelope, SHARED_CONTACT_CREATE))) {
+      throw new Error('GuardrailViolation: concurrent builds cannot create shared contact types; record the missing type and continue independent work');
+    }
     const forbiddenLabel = FORBIDDEN.test(source) ? source.match(FORBIDDEN)?.[0] : await this.forbiddenUiLabel(envelope);
     if (forbiddenLabel) throw new Error(`GuardrailViolation: prohibited Cvent action detected (${String(forbiddenLabel).slice(0, 120)})`);
 

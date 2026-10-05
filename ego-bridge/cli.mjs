@@ -69,7 +69,7 @@ async function main() {
       }
       return nativeFetch(input, init);
     };
-    process.env.EGO_BROWSER_AGENT_WORKSPACE = resolve(project, ".pi/skills/ego-browser");
+    process.env.EGO_BROWSER_AGENT_WORKSPACE = resolve(project, ".pi/skills/cvent-event-build/references/browser");
     const instance = createHash("sha256").update(runtime.steelSessionId).digest("hex");
     process.env.EGO_BROWSER_INSTANCE_ID = `steel:${instance}`;
     process.env.EGO_BROWSER_STATE_DIR = resolve(project, "data/ego-v2", instance);
