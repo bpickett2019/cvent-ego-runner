@@ -13,10 +13,11 @@ const ref = name => source(`.pi/skills/cvent-event-build/references/${name}.md`)
 const skill = () => source('.pi/skills/cvent-event-build/SKILL.md');
 const compact = value => value.replace(/\s+/g, ' ');
 
-// Historical private-fixture acceptance is deliberately not replaced by a fake
-// workbook or silently skipped. A clean clone lacks this fixture.
+// Historical private-fixture acceptance is not replaced by a fake or skipped.
+// CVENT_PRIVATE_RR_PLAN lets operators keep the genuine fixture outside public source;
+// the same exact source hash, counts and identity assertions below always apply.
 test("RR plan covers every sheet and preserves benchmark identities", async () => {
-  const plan = JSON.parse(await source("data/current/rr-plan.json"));
+  const plan = JSON.parse(await readFile(process.env.CVENT_PRIVATE_RR_PLAN || join(root, 'data/current/rr-plan.json'), 'utf8'));
   assert.equal(plan.workbook.sheetCount, 21);
   assert.equal(plan.registration.types.length, 17);
   assert.equal(plan.questions.length, 43);
@@ -46,14 +47,14 @@ test("workbook UI has no scope, budget or prompt overrides", async () => {
   assert.match(RUN_POLICY.instruction, /using the cvent-event-build skill/);
 });
 
-test("short native task delegates to skills with types-first precedence, without SOW or a scripted editor sequence", async () => {
+test("native task delegates policy and stage order without a scripted editor sequence", async () => {
   const task = RUN_POLICY.executionInstructions;
   assert.equal(task, await source('app/native-task.md'));
-  assert.ok(task.trim().split(/\s+/).length <= 120);
+  assert.ok(task.trim().split(/\s+/).length <= 400);
   assert.match(task, /\.pi\/skills\/cvent-event-build\/SKILL.md/);
-  assert.match(task, /verified event selection, then RR-required\s+registration types, then the remaining work in dependency order/);
-  assert.doesNotMatch(task, /Choose your own plan and dependency order/);
-  assert.match(task, /Execute and verify saved results/);
+  assert.match(compact(task), /execute in the skill's order/);
+  assert.match(compact(task), /sheet order is not execution order/);
+  assert.match(task, /verify saved fields and relationships/);
   assert.doesNotMatch(task, /SOW|approved-sow|scopeDocument|Work in this order|discounts.first|Stage [1-5]|\$60/i);
   assert.equal(RUN_POLICY.approvedSow, undefined);
   assert.equal(RUN_POLICY.executionPolicy, 'native-pi');
@@ -66,7 +67,8 @@ test("short native task delegates to skills with types-first precedence, without
 test("one explicit skill has a complete self-contained reference graph", async () => {
   assert.deepEqual(RUN_SKILLS, ['cvent-event-build']);
   const directory = join(root, '.pi/skills/cvent-event-build');
-  const pending = [join(directory, 'SKILL.md')], seen = new Set();
+  // SKILL.md is immutable client text; native-task also supplies reference entrypoints.
+  const pending = RUN_SKILL_FILES.map(file => join(root, file)), seen = new Set();
   while (pending.length) {
     const file = pending.shift(); if (seen.has(file)) continue; seen.add(file);
     const text = await readFile(file, 'utf8');
@@ -83,60 +85,46 @@ test("one explicit skill has a complete self-contained reference graph", async (
   assert.deepEqual([...seen].map(file => relative(root, file)).sort(), [...RUN_SKILL_FILES].sort());
 });
 
-test("build skill applies types-first and narrow contact-type scope without bypassing runtime or transport", async () => {
+test("client scope preserves identity, shared definitions and assigned transports", async () => {
   const build = compact(await skill());
-  assert.match(build, /\[runner integration\]\(references\/runner-integration.md\)/);
-  assert.match(build, /verified event selection → registration types → remaining configuration/);
-  assert.match(build, /Missing essential inputs, known unsupported features and ordinary pre-write navigation\/selector errors are not reasons to end the build/);
-  assert.match(build, /sole create-only contact-type exception/);
+  assert.match(build, /Event → Registration Types → Admission Items → Fees → Discount Codes/);
+  assert.match(build, /Change anything shared across the Cvent account/);
+  assert.match(build, /Never repeat a change whose outcome you don't know/);
   const integration = compact(await ref('runner-integration'));
-  for (const text of ['Preserve event ID/name', 'Use "$CVENT_API_BIN"', 'No raw HTTP, standalone helper',
-    'Do not start another agent, browser, profile, tab or server', 'No deletion/archive',
-    'widget/link removal, reset, cloning, publishing', 'shared-account/object changes',
-    'attendee/CRM access', 'communications sending', 'Sessions/Speakers configuration',
-    'merchant/payment-account', 'banking/settlement', 'shared payment/tax/currency',
-    'credential/integration-identifier', 'Human login/MFA only', 'Do not read or print credentials',
-    'environment dumps, process environments', 'secret-bearing prior transcripts',
-    'Lost identity/control', 'expired login', 'exposed secrets', 'crash/disconnect',
-    'unresolved write outcomes', 'Never replay unresolved writes, clear locks/uncertainty or bypass holds',
-    'configureDiscount and configureVolumeDiscount only', 'Never bypass a denial/uncertainty via UI']) assert.ok(integration.includes(text), text);
+  for (const phrase of ['Verify exact ID/name and unpublished state', 'No other agent, browser, profile, tab, server, raw connection or HTTP fallback',
+    'Human login/MFA only', 'same-event claims', 'remove locks/markers', 'exposed secrets', 'Pending Save means observe, not reload or repeat',
+    'No automatic next build', 'Other library writers are denied by the RR CLI']) assert.ok(integration.includes(phrase), phrase);
   const bridge = compact(await ref('browser/references/steel-bridge'));
-  assert.match(bridge, /active RR build uses `\$CVENT_API_BIN` for discount reads\/writes/);
   assert.match(bridge, /non-discount API writes are not authorized/);
   assert.doesNotMatch(bridge, /Pi may choose Ego or|approved SOW/);
 });
 
-test("imported specialists keep domain guidance and use this runner's capabilities and result spelling", async () => {
-  const registration = compact(await ref('registration-and-pricing'));
-  for (const text of ['Apply authoritative old-to-new mappings', 'type/admission availability',
-    'independently reopen/read the saved configuration', 'without submitting attendee records']) assert.ok(registration.includes(text), text);
-  const website = compact(await ref('website-and-fields'));
-  assert.match(website, /agreed category checklist to detect omissions/);
-  assert.match(website, /Continue versus Restore/);
+test("technical references preserve domain evidence without removed specialist policies", async () => {
+  const rr = compact(await ref('rr-interpretation'));
+  assert.match(rr, /exact sheet\/cell\/range references/);
+  assert.match(rr, /Keep deferred connections unfinished until their dependencies are saved and verified/);
   const discounts = compact(await ref('discounts'));
-  for (const text of ['Exact mapping checklist', 'Reconcile and execute',
-    'Registration-type Advanced Filters are not exposed', 'before any write',
-    'adapter accepts any operator-selected event name', 'verified UUID/name binding', 'configureDiscount/configureVolumeDiscount',
-    'not a standalone HTTP helper', 'never a browser fallback',
-    'Do not switch to Ego to bypass an API rejection']) assert.ok(discounts.includes(text), text);
-  const integration = compact(await ref('runner-integration'));
-  for (const text of ['listDiscounts', 'listDiscountedAgendaItems', 'CVENT_CREDENTIALS_FILE',
-    'Non-persisting browser preview can verify behavior', 'no blockers/untested/uncertainty']) assert.ok(integration.includes(text), text);
-  const verify = compact(await ref('verification'));
-  assert.match(verify, /Revisit the original RR to identify omissions/);
-  assert.match(verify, /\*\*DONE — RR website\/registration requirements\*\*/);
-  assert.match(verify, /\[runner contract\]\(runner-contract.md\)/);
-  assert.doesNotMatch(verify, /\*\*COMPLETE\b|SOW|six-widget/);
+  for (const phrase of ['Registration-type Advanced Filters are not exposed', 'Unsupported required eligibility blocks the discount before writing',
+    'full nonempty', 'complete links', 'No raw HTTP or browser discount fallback after denial']) {
+    if (phrase === 'full nonempty') assert.match(compact(await source('CVENT-API.md')), /full nonempty desired set/);
+    else assert.ok(discounts.includes(phrase), phrase);
+  }
+  const bridge = compact(await ref('browser/references/steel-bridge'));
+  assert.match(bridge, /Continue retains current work; Restore can replace it/);
+  const contract = compact(await ref('runner-contract'));
+  assert.match(contract, /No included|missing saved field/);
+  assert.match(contract, /Registration testing is not a new-build requirement/);
+  assert.match(contract, /No automatic next run/);
 });
 
 test("skill runner contract preserves progress and controller completion formats", async () => {
   const contract = await ref('runner-contract');
-  for (const text of ['state.json.requirements', 'verified_changed', 'verified_existing',
+  for (const text of ['"requirements":[]', 'verified_changed', 'verified_existing',
     'partially_verified', 'currentStage', 'currentAction', 'updatedAt', 'unresolved-changes.json',
     'reports/final-report.md', 'reports/final-report.json', 'STOPPED']) assert.ok(contract.includes(text), text);
-  const example = JSON.parse(contract.split('Minimum successful JSON:')[1].match(/```json\n([\s\S]*?)\n```/)[1]);
-  assert.deepEqual(example, { eventId: '<authorizedEvent.apiEventId>', status: 'DONE', completion: { requirements: true, draft: true }, blockers: [], untested: [] });
-  assert.match(compact(contract), /Before changing a verified requirement, mark it unverified again/);
+  const example = JSON.parse(contract.split('Minimum DONE shape')[1].match(/```json\n([\s\S]*?)\n```/)[1]);
+  assert.deepEqual(example, { eventId: '<authorizedEvent.apiEventId>', status: 'DONE', completionPolicy: 'client-rules-configuration-only-v1', registrationTesting: 'not_performed', completion: { requirements: true, draft: true }, blockers: [], untested: [] });
+  assert.match(compact(contract), /Before editing a verified item, revoke stale verification, mark it unverified/);
 });
 
 test("known capability gaps are local blockers; pending and uncertain saves are not replayed", async () => {
@@ -164,8 +152,9 @@ test('event access is based on verified identity, not a naming-prefix convention
     const text=await source(file);assert.doesNotMatch(text,/startsWith\(["']\(C\+D\)/);
   }
   const integration=await ref('runner-integration');
-  assert.match(integration,/No naming-prefix guard applies/);
-  assert.match(integration,/target is locked/);
+  assert.match(compact(integration),/Verify exact ID\/name and unpublished state/);
+  assert.match(compact(integration),/Do not retarget or follow replacement inputs/);
+  assert.match(compact(await source('CVENT-API.md')),/no naming prefix is required/);
 });
 
 test("supported discount read/write capabilities remain available without a live call", () => {

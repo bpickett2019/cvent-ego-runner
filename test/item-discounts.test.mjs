@@ -65,6 +65,29 @@ test("item-scoped code is created inactive, linked via API, finalized once, and 
   assert.equal(f.evidence.at(-1).phase, "FINAL_READBACK"); assert.equal(f.evidence.at(-1).matched, true);
   assert.equal((await f.run()).action, "unchanged"); assert.equal(f.writes.length, 4, "repeat never adds or changes links");
 });
+for (const method of [
+  { type: 'FLAT_PRICE', value: 7 },
+  { type: 'BY_PERCENTAGE', value: 15 },
+  { type: 'BY_AMOUNT', value: 5 },
+]) test(`explicit policy-derived defaults work for admission-only ${method.type} discounts (mock transport)`, async () => {
+  const f = fixture();
+  // Synthetic values only. The agent supplies its approved decisions explicitly;
+  // this does not claim that the adapter interprets blank workbook cells.
+  const data = { ...input(), code: 'SYNTHETIC-POLICY', agendaItems: [{ id: admissionId, type: 'AdmissionItem' }],
+    patch: { ...patch, method, autoApply: false, capacity: { total: -1 } } };
+  const result = await f.run(data);
+  assert.equal(result.initialConfigurationComplete, true);
+  assert.equal(result.saved.code, 'SYNTHETIC-POLICY');
+  assert.deepEqual(result.saved.method, method);
+  assert.equal(result.saved.capacity.total, -1); assert.equal(result.saved.autoApply, false);
+  assert.equal(result.saved.active, true); assert.equal(result.saved.applyToAllAgendaItems, true);
+  assert.deepEqual(f.writes.map(w => w.phase), ['create', 'link', 'finalize']);
+  assert.equal(f.writes[0].body.active, false); assert.equal(f.writes[0].body.applyToAllAgendaItems, false);
+  assert.equal(f.writes[1].path.split('/').at(-1), admissionId);
+  assert.equal(f.evidence.at(-1).phase, 'FINAL_READBACK'); assert.equal(f.evidence.at(-1).matched, true);
+  assert.equal((await f.run(data)).action, 'unchanged');
+  assert.equal(f.writes.length, 3, 'verified existing result must not create or link again');
+});
 test("existing event discounts receive additive links without deleting or duplicating objects", async () => {
   const f = fixture({ existing: true }); const before = structuredClone(f.row);
   const result = await f.run(); assert.equal(result.action, "updated"); assert.equal(result.requirementsSatisfied, true);

@@ -1,71 +1,51 @@
-# Bind the approved skill to the existing runner
+# Assigned runtime
 
-[SKILL.md](../SKILL.md) controls business policy. This reference preserves the actual
-job, tool and ownership contract. It grants no additional capabilities or scope.
+[SKILL.md](../SKILL.md) defines the business task. The job and tools below define what
+this session can actually execute. Read the [result contract](runner-contract.md).
 
-## Job and browser
+## Binding and ownership
 
-Use the authoritative job's workbook, workbookSha256, workspace and authorizedEvent.
-The operator's selected event is not the workbook Event Title used for substitutions.
-Confirm exact ID/name and unpublished state. Never follow a replacement workbook or
-retarget after execution begins. Clear/upload starts a fresh context, not continuation.
+Use only the authoritative job's workbook, workbookSha256, workspace and authorizedEvent.
+The workbook Event Title used for text substitution is not the selected event identity.
+Verify exact ID/name and unpublished state. Do not retarget or follow replacement inputs.
 
-One native Pi session uses the assigned Steel page through "$EGO_BROWSER_BIN" in
-RR_WORKSPACE. Read [controls](browser/controls.md) and [Steel bridge](browser/references/steel-bridge.md)
-before browser calls. No other agent, browser, profile, tab, command server, raw CDP
-connection or HTTP fallback. SDK examples cannot override host restrictions.
+One native Pi session uses "$EGO_BROWSER_BIN" in RR_WORKSPACE for the assigned Steel
+page and "$CVENT_API_BIN" for supported discounts and prerequisite catalog reads.
+No other agent, browser, profile, tab, server, raw connection or HTTP fallback.
+Read [browser controls](browser/controls.md) or [discounts](discounts.md) before use.
+SDK/library methods do not automatically become permitted runtime operations.
 
-The app owns login, ownership, Return, Stop and cleanup. Human login/MFA only. Pause
-and request login using the supported app handoff; resume only if the app explicitly
-supports and confirms that same-session pause and verified Return. If login expiry or
-Take Control causes Stop, that job is not resumable. Never fabricate pause/ownership
-flags, resume a stopped job or replay interrupted actions. Re-observe after Return.
+The app owns login, Take Control, Return, Stop and cleanup. Human login/MFA only.
+Continue the same session only after the app confirms a safe pause and explicit,
+identity-verified Return. A stopped job is not resumable. Re-observe after Return;
+never fabricate pause/ownership flags or press Return for the user.
 
-## Discount API
+## Execution boundaries
 
-Read [discounts](discounts.md) and "$CVENT_API_GUIDE" before calling "$CVENT_API_BIN".
-Use its supported discount reads/writes and authorized catalog/dependency reads.
-Only configureDiscount authoring is needed for this build; the installed volume
-operation remains available technically but Volume Discounts are excluded by policy.
-Other configuration uses the assigned browser. Do not change the adapter, issue raw
-HTTP, use unsupported fields or switch to browser discount authoring after denial.
+Ownership, identity, operation leases, same-event claims, uncertainty, metering and
+cleanup remain authoritative. Do not change another workspace or runtime evidence,
+release claims, remove locks/markers, replay intents or replace the assigned browser.
 
-The adapter owns OAuth, event binding, durable intent, pagination and saved readback.
-Use exact observed resource UUIDs and actual source references. An adapter verified
-result establishes its checked saved fields/links, not live registration testing.
-Unsupported eligibility must not become a broader rule. Missing capabilities affect
-the item; possible partially executed API operations retain global uncertainty rules.
+Known pre-write failures block dependent requirements, not independent work. Pending
+Save means observe, not reload or repeat. Possible effects with an unknown outcome,
+control/identity loss, exposed secrets and runtime safety stops prohibit further
+writes. Browser crashes/disconnects and repeated unresponsiveness can stop the run.
+A banner alone does not override the skill's concurrent-editor policy; an actual
+tool denial or uncertain write cannot be bypassed. Preserve evidence and accounting.
 
-Credentials are supplied privately. Never print environment variables, process
-environments, credentials/tokens or secret-bearing prior transcripts. The native
-prompt's diagnostic-guard status helper reports only configured/missing; a rejected
-diagnostic ran nothing and does not itself mean exposure. Actual exposure still stops.
+The browser does not expose verified object deletion. The discount adapter supports
+explicit event-item association replacement, not whole-object deletion or arbitrary
+eligibility fields. These are capability limits, not reasons to invent saved results.
+Only configureDiscount authoring is needed under the current skill; the executable's
+additional volume operation does not expand business scope. Other library writers
+are denied by the RR CLI; do not enable them or switch transport after a denial.
 
-## Preserved executable boundaries
+Credentials are supplied privately. Never print environments, tokens, credential
+files or secret-bearing transcripts. `node app/diagnostic-guard.js --status` reports
+configured/missing only. A rejected diagnostic is not exposure; actual exposure stops.
 
-Ownership, identity, operation leases, uncertainty, metering, cleanup and concurrency
-remain authoritative. Same-event claims and other-workspace resources are not the
-skill's to change. The current runtime can stop for uncertain execution or repeated
-browser unresponsiveness; the business policy does not suppress these guards.
-No lock/marker deletion, intent replay, credential changes or alternative transport.
+## Settlement
 
-A concurrent-editor banner alone is not a special automatic stop in the inspected
-save observer/browser failure guard. Follow the skill's save-and-disclose policy,
-without treating it as permission to override an actual tool denial or shared scope.
-Save once, use bounded supported observation, and verify persisted values only after
-settlement. Never navigate/reload while Save remains pending. Only the tool's safe
-settled retry, after inspecting possible prior effects, is eligible for the skill's
-one retry; no mutation retries after uncertain outcomes.
-
-Browser object deletion remains unsupported. Existing supported event-only discount
-item-association replacement is narrower than whole-object deletion. Do not remove
-shared definitions or unrelated leftovers. No publishing, attendee operations,
-registration submission, emails, account administration or other-event edits.
-
-## Results
-
-Maintain [runner contract](runner-contract.md) records in this job only. Preserve
-historical reports/jobs/costs. No paid summary agent or automatic next run. DONE means
-saved configuration under approved rules; registration testing is not performed.
-Actual terminal status remains subject to the unchanged runner settlement and safety
-checks. A model exit or report sentence cannot override them.
+The controller, not the model's report, settles the run and applies uncertainty gates.
+Use the skill's status and report rules; record evidence in this job only. No automatic
+next build, paid summary agent, historical-result rewrite or stopped-session recovery.

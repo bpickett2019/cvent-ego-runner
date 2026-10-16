@@ -6,7 +6,7 @@ const source=path=>readFile(new URL('../'+path,import.meta.url),'utf8');
 const browser='.pi/skills/cvent-event-build/references/browser/';
 
 test('cleanup preserves actual executor/skill/budget selections rather than silently optimizing them',async()=>{
-  assert.deepEqual(RUN_SKILLS,['cvent-event-build']);assert.equal(RUN_SKILL_FILES.length,17);
+  assert.deepEqual(RUN_SKILLS,['cvent-event-build']);assert.equal(RUN_SKILL_FILES.length,11);
   assert.equal(RUN_POLICY.executionPolicy,'native-pi');assert.equal(RUN_POLICY.spendingLimitEnabled,false);
   assert.equal(RUN_POLICY.targetCostUSD,60);assert.equal(RUN_POLICY.allowanceUSD,60);assert.equal(RUN_POLICY.externalCostReserveUSD,10);
   const launcher=await source('app/pi-rpc.mjs');assert.match(launcher,/env.PI_THINKING_LEVEL \?\? "high"/);
@@ -21,7 +21,7 @@ test('current docs describe the deployed single-skill and reset/pause contracts 
   assert.match(rpc,/Native Pi\/provider retries and compaction remain distinct/);
 });
 test('active browser recipe uses only the assigned session and app-owned completion/ownership',async()=>{
-  const controls=await source(browser+'controls.md');
+  const controls=(await source(browser+'controls.md')).replace(/\s+/g,' ');
   assert.match(controls,/taskSpace\(1246080070\)/);assert.match(controls,/\$EGO_BROWSER_BIN/);
   assert.match(controls,/task.finish\(\{ keep: \[page.label\] \}\)/);
   assert.doesNotMatch(controls,/taskSpace\("|taskSpace\(7\)|takeOverTaskSpace\(7\)|claimTaskSpace\(7\)|finish\(\{ keep: \[\] \}\)|await page.keyboard.paste\(/);

@@ -10,7 +10,7 @@ const policy='client-rules-configuration-only-v1';
 const read=p=>readFileSync(resolve(root,p),'utf8');
 const manifest=JSON.parse(read('deploy/client-policy-manifest.json'));
 const walk=p=>readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(resolve(p,e.name)):[resolve(p,e.name)]);
-test('approved skill and policy hashes follow only the reviewed three-file UI overlay',()=>{
+test('approved skill and policy hashes follow explicit UI and local readiness overlays',()=>{
  assert.equal(createHash('sha256').update(read('.pi/skills/cvent-event-build/SKILL.md')).digest('hex'),'34431110c1f9941a18831c266f814a208c55b11969e1c391572760a7c81a5a44');
  const overlay=JSON.parse(read('deploy/saved-results-ui-manifest.json')).changes;
  assert.deepEqual(overlay.map(x=>x.path).sort(),['public/app.js','public/index.html','public/result-language.js']);
@@ -19,10 +19,22 @@ test('approved skill and policy hashes follow only the reviewed three-file UI ov
   assert.equal(row.beforeSha256,manifest.changes.find(x=>x.path===row.path)?.afterSha256 || staging[row.path],row.path);
   assert.equal(createHash('sha256').update(read(row.path)).digest('hex'),row.afterSha256,row.path);
  }
+ const readiness=JSON.parse(read('deploy/readiness-instructions-manifest.json'));
+ assert.equal(readiness.status,'LOCAL_CANDIDATE_NOT_DEPLOYED');
+ assert.equal(readiness.baseCommit,'bff5ef424923143d98d0927811643deb35856bee');
+ const seen=new Set();
+ for(const row of readiness.changes){
+  assert.ok(!seen.has(row.path),row.path);seen.add(row.path);
+  assert.ok(row.path==='app/run-policy.mjs' || row.path==='app/native-task.md' ||
+   ['CVENT-API.md','CVENT-API-COVERAGE.md'].includes(row.path) ||
+   /^\.pi\/skills\/cvent-event-build\/references\/.+\.md$/.test(row.path),row.path);
+  assert.equal(row.beforeSha256,overlay.find(x=>x.path===row.path)?.afterSha256 || manifest.changes.find(x=>x.path===row.path)?.afterSha256 || staging[row.path],row.path);
+  assert.equal(createHash('sha256').update(readFileSync(resolve(root,row.path))).digest('hex'),row.afterSha256,row.path);
+ }
  for(const row of manifest.changes){
   const file=resolve(root,row.path);
   if(row.operation==='delete')assert.ok(!existsSync(file),row.path);
-  else assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),overlay.find(x=>x.path===row.path)?.afterSha256 || row.afterSha256,row.path);
+  else assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),readiness.changes.find(x=>x.path===row.path)?.afterSha256 || overlay.find(x=>x.path===row.path)?.afterSha256 || row.afterSha256,row.path);
  }
 });
 test('retained skill Markdown links resolve without deleted business references',()=>{
@@ -35,8 +47,8 @@ test('retained skill Markdown links resolve without deleted business references'
  }
 });
 test('native task retains diagnostic and runtime protections, while delegating policy',()=>{
- const text=read('app/native-task.md');
- for(const phrase of ['diagnostic-guard.js --status','never dump environment variables','authoritative client business','never replay unresolved writes','Do not run\nregistration previews'])assert.ok(text.includes(phrase),phrase);
+ const text=read('app/native-task.md').replace(/\s+/g,' ').toLowerCase();
+ for(const phrase of ['diagnostic-guard.js --status','never dump environment variables','client business policy','never replay unresolved','do not run registration previews'])assert.ok(text.includes(phrase),phrase);
 });
 test('DONE machine status stays unchanged; new policy has exact qualified summary',()=>{
  const job={status:'DONE'}, result=runOutcome(job,{pending:[]},policy);

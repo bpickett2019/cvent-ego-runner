@@ -3,11 +3,8 @@ import { readFileSync } from "node:fs";
 // Explicit project skills only; do not discover unrelated user/workspace skills.
 export const RUN_SKILLS = Object.freeze(["cvent-event-build"]);
 export const RUN_SKILL_FILES = Object.freeze([
-  "SKILL.md", "references/scope-and-intake.md", "references/operating-model.md",
-  "references/rr-interpretation.md", "references/registration-type-mapping-guide-v2.md",
-  "references/runner-integration.md", "references/runner-contract.md",
-  "references/website-and-fields.md", "references/assets.md", "references/registration-and-pricing.md",
-  "references/discounts.md", "references/vouchers-and-rules.md", "references/verification.md",
+  "SKILL.md", "references/change-policy.md", "references/rr-interpretation.md",
+  "references/runner-integration.md", "references/runner-contract.md", "references/discounts.md",
   "references/browser/controls.md", "references/browser/references/api.md",
   "references/browser/references/steel-bridge.md", "references/browser/references/clearing-state.md",
   "references/browser/references/assigned-runtime.md",

@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { observeSave, readSaveSignals, saveObserverForHost, saveOnce } from '../ego-bridge/save-observer.mjs';
 import { SteelEgoHost } from '../ego-bridge/host.mjs';
-const idle = { pending: false, completionVisible: false, rejectionVisible: false, validation: [] };
+// Match the deployed versioned observation protocol; malformed observations below
+// still exercise fail-closed validation rather than bypassing it in production.
+const idle = { schemaVersion: 1, documentState: 'READY', pending: false, completionVisible: false, rejectionVisible: false, validation: [] };
 function fixture(states, guard = async () => {}) {
   let elapsed = 0, calls = 0; const markers = [];
   const page = { evaluate: async () => { const value = states[Math.min(calls++, states.length - 1)]; if (value instanceof Error) throw value; return value; } };
@@ -105,8 +107,17 @@ test('save dispatch exception is not a read-only retry even for context errors',
   await assert.rejects(saveOnce(page, '#Save', { completionSelector: '#Edit' }, { checkControl: async () => {}, onUncertain: async x => markers.push(x) }), { name: 'BrowserSaveUncertainError' });
   assert.equal(clicks, 1); assert.equal(markers[0].failure.phase, 'SAVE_DISPATCH');
 });
-test('missing document body is a typed read-only transition, not silent completion', () => {
-  assert.throws(() => runInNewContext(`(${readSaveSignals.toString()})()`, { document: { body: null } }), /SaveDocumentNotReady/);
+test('missing document body and loading document return NOT_READY, never completion', () => {
+  for (const document of [{ body: null }, { body: {}, readyState: 'loading' }]) {
+    const result = runInNewContext(`(${readSaveSignals.toString()})()`, { document });
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), { ...idle, documentState: 'NOT_READY', pending: true });
+  }
+});
+test('structured NOT_READY is observed until READY without replay or false verification', async () => {
+  const f = fixture([{ ...idle, documentState: 'NOT_READY', pending: true }, { ...idle, completionVisible: true }]);
+  const result = await f.run();
+  assert.equal(result.documentNotReadyPolls, 1); assert.equal(result.polls, 2);
+  assert.equal(result.verified, false); assert.deepEqual(f.markers, []);
 });
 
 test('evidence storage failure still emits the immediate uncertainty stop', async () => {

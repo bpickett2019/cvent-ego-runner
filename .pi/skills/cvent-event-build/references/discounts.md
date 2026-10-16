@@ -1,65 +1,45 @@
-# Discount codes: existing guarded adapter
+# Discount tool
 
-[SKILL.md](../SKILL.md) defines business values, defaults and item-first resolution of
-Final total conflicts. [Runner integration](runner-integration.md) binds the tool.
-Read "$CVENT_API_GUIDE" for the actual input schema; this file adds no API capability.
-Volume Discounts, Session/Optional Item columns and non-admission fees are excluded.
-Do not call configureVolumeDiscount merely because the adapter still exposes it.
+Use [SKILL.md](../SKILL.md) for business decisions and [runner integration](runner-integration.md)
+for binding. Read "$CVENT_API_GUIDE" for the actual input schema, then use only
+"$CVENT_API_BIN". This reference adds no authoring capability.
 
-## Resolve then call
+## Prepare
 
-Use "$CVENT_API_BIN" only. Confirm the bound unpublished event, complete event
-inventory and unique discount identity before creation. Resolve listed Admission
-Items to actual event UUIDs. Preserve unrelated writable fields/associations on
-updates. A blank existing field is not a request to reset it; a required blank on
-creation uses the skill's approved default, including explicit No booleans and -1
-unlimited discount capacity. Rejecting a supplied/defaulted value remains a tool
-limitation, not permission to patch the adapter or claim it saved.
+Resolve the intended discount uniquely in the complete bound-event catalog and
+resolve required items to actual event UUIDs. Preserve unrelated writable fields
+and associations. Use createIfMissing only after absence is established.
 
-Dates: omit a patch key to preserve, give YYYY-MM-DD to set, or explicit null to
-clear an existing restriction for source "None". A blank existing optional date now
-preserves. On creation, optional blank dates are omitted; use the approved date
-fallback only if actually required. Preserve valid nonblank dates, applying the
-skill's reversed-range decision and recording original versus chosen values.
+Inputs contain actual rrReferences and data with code, patch, optional discountId,
+createIfMissing, agendaItems and removeAgendaItems. Record policy-derived values
+separately; do not manufacture a workbook cell containing the default.
 
-For the approved Final total + Admission Items conflict, attach the listed items.
-The installed adapter selects item-scoped application when agendaItems are supplied;
-do not claim it independently configured both modes. Record the item-first decision.
-Do not invent an unsupported patch property. Unsupported registration-type Advanced
-Filters still cannot be simulated by audience flags or item links.
+Date patch keys: omission preserves, YYYY-MM-DD sets, explicit null clears a bound.
+The adapter translates clearing into its preserved full PUT; it does not send null
+dates on the wire. Derive the desired intent from the skill, not this transport rule.
 
-## Input and safety
+Supplying agendaItems selects item-scoped application; the adapter cannot independently
+configure both final-total and item-scoped modes. Registration-type Advanced Filters
+are not exposed. Audience flags and item links are not substitutes for those filters.
+Unsupported required eligibility blocks the discount before writing.
 
-Write JSON uses actual rrReferences and data with code, patch, optional discountId,
-createIfMissing, agendaItems and removeAgendaItems under the documented schema.
-Codes/names are not UUIDs. Source references remain mandatory technical provenance
-even when a chosen value comes from an approved default rather than the cell literal.
-Record that rule in the ledger; never manufacture a cell containing the default.
+## Execute and verify
 
-Use createIfMissing only after absence is established. The adapter's existing
-create/link/finalize lifecycle and durable intent/readback remain unchanged. It may
-create inactive, attach items and finalize the approved state; do not manually replay
-these transitions. A failure can leave a real partial object: retain IDs/evidence,
-stop if effects are uncertain and never issue a duplicate create as cleanup.
+The adapter owns OAuth, pagination, durable intent, dispatch and bounded readback.
+Its create/link/finalize lifecycle can leave a real partial object on failure. Retain
+IDs and evidence; never duplicate-create, replay transitions or delete as cleanup.
 
-Existing association replacement requires observed discountId, a nonempty complete
-desired agendaItems set, explicit disjoint removeAgendaItems, and the adapter's
-baseline/event-scope checks. AdmissionItem links are the in-scope desired links in
-this build. Do not delete optional/session objects or silently ignore conflicting
-existing effects. An active discount cannot pass through an empty link set: follow
-the documented supported deactivation/readback conditions if required for an authorized
-replacement, then verify its final active state. Do not bypass a refusal. These
-operations unlink associations, not whole discounts or items.
+Association replacement needs observed discountId, a complete nonempty desired
+agendaItems set and explicit disjoint removeAgendaItems matching the omitted links.
+An active rule must not pass through an empty link set. Full retargeting requires
+prior authorized, verified deactivation and final reactivation under the API guide.
+Unlinking does not delete a discount or its items. Do not bypass a refusal.
 
-## Evidence and completion
+Inspect the private operation receipt for saved properties and complete links.
+HTTP success alone is not saved verification. A verified result covers the adapter's
+checked values/preservation, not all workbook semantics or registration behavior.
+Unknown effects stop further writes; a known pre-write limitation leaves independent
+work available. No raw HTTP or browser discount fallback after denial.
 
-Inspect the adapter's private receipt for relevant saved properties, event identity
-and complete item links, not credential-bearing/raw bulk logs. Verify the result
-matches the approved derived intent, including scope and preserved properties. Use
-bounded read-only checks where supported; never retry an unknown write. Successful
-HTTP alone is not saved configuration proof. Record field-specific Not done items
-and continue independent work only when no unresolved effects remain.
-
-No registration preview or test registration is part of this build. Do not add a
-preview-only blocker or claim discount behavior was exercised. Pass source values,
-approved decisions, saved evidence and each unfinished field to [runner contract](runner-contract.md).
+Record saved evidence and field-specific remaining work using the
+[result contract](runner-contract.md). Do not add preview-only completion gates.

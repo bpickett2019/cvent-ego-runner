@@ -1,0 +1,62 @@
+{
+  "status": "LOCAL_CANDIDATE_NOT_DEPLOYED",
+  "baseCommit": "bff5ef424923143d98d0927811643deb35856bee",
+  "description": "Supporting-instruction simplification and current skill inventory; no runtime guard, browser host, API adapter or UI changes.",
+  "changes": [
+    {
+      "path": ".pi/skills/cvent-event-build/references/browser/controls.md",
+      "beforeSha256": "9bd16a4bade253b2c9ad13ecc1a6fcfc7939e4a26d471472502e9332d3e40969",
+      "afterSha256": "79b8a9a70eec74dc6ad5eac11cdcda24dcc95de0534fbca1dde76edd74143466"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/browser/references/steel-bridge.md",
+      "beforeSha256": "0ddbbd728c0b82949bc23b2ecfb60fedcc015fe4cb1b16b544787c3404a754c0",
+      "afterSha256": "b5b0363fbef4b45a4400eb0acf8e65597741fe024a74eea443b03056d1d509cf"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/change-policy.md",
+      "beforeSha256": "789610ec620e2a91295d0044ea840b050a307c72f2b08933572515757028f6c9",
+      "afterSha256": "f4359bcea38bcae9d396585ac21edbbd3a560531cd47f87297adf61819eda65a"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/discounts.md",
+      "beforeSha256": "428aa2e550dd67dd113536fb815a8b636c5ec5182fa78de42937ea5a139ee79b",
+      "afterSha256": "15fcf34df5eb91fe14a332183b2903b7ea9378217999f2206f599865f422f624"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/rr-interpretation.md",
+      "beforeSha256": "c15fe585ec1ea9dd1b418c8043a813e20d7d7bbc7ba1200a5055ed9e121c5511",
+      "afterSha256": "62acc43ca139ccf419383bbd48fd46d9a9848324f37770cf53fc895fdba34804"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/runner-contract.md",
+      "beforeSha256": "f55b93c626ef472264d8e107d89f6b4e8c36cabd850eecf8195025584b3610e6",
+      "afterSha256": "2f9844cd68cb1f0303e3fe0a86ff41131cded5e7aa8c0ea2c7a87e13f102e845"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/runner-integration.md",
+      "beforeSha256": "de27571fba94569e97472205ecc4e1feaacc35cc84dae91e8ddd9ff4b204da6c",
+      "afterSha256": "7b0a7e0816603a2eedae44f92b32e526dfb125bbc5338eb77060fd64328a1625"
+    },
+    {
+      "path": "CVENT-API-COVERAGE.md",
+      "beforeSha256": "3bcbc04ea961bbf4e2b05ca99f062bc6da419d7d50e7d92dec8a6a4536ca06e6",
+      "afterSha256": "93aa7d20eeb630ded81a27da24f23c5542fc8f6025020bb97a1a200af7af75d0"
+    },
+    {
+      "path": "CVENT-API.md",
+      "beforeSha256": "c2b09924e294cefd325903456d299d7c0418bb445fb5189e03773f5632669c8b",
+      "afterSha256": "00f50af94b62e591f04000ed9b1f4c333fd672da6d6f90de66a969e223207c82"
+    },
+    {
+      "path": "app/native-task.md",
+      "beforeSha256": "49280736bda07753cb4cf8a8b0695a33a58ca36119a787276464651d3be386c5",
+      "afterSha256": "27a13a79146a7770c25d8e1dc5730ee41fac19c01aa15176627cb0a138cb9aa3"
+    },
+    {
+      "path": "app/run-policy.mjs",
+      "beforeSha256": "4068e74c00a0f69cea83e7f4fc2c3bd822866db584189e8239a4417c4a827f40",
+      "afterSha256": "c68503ed1fac4c6cd91cf194d0b803a0b1619ecd08a70c6a91d259df28e3a234"
+    }
+  ]
+}

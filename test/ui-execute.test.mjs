@@ -6,39 +6,80 @@ import { workspaceBase, workspacePath, scopedStorage } from '../public/workspace
 import { requirementProgress } from '../public/requirement-progress.js';
 import { executionReadiness } from '../public/execution-readiness.js';
 import { runOutcome } from '../public/run-outcome.js';
-// Inject the real pure exports into this DOM fixture; browser module loading
-// is separately exercised by the live UI check.
+import { resultLanguage } from '../public/result-language.js';
+import { bindRrFileInput, MAX_RR_BYTES } from '../public/rr-file-input.js';
+import { createProgressEvidence, canCheckFinalReport, finalReportAvailability, evidenceNotice } from '../public/progress-evidence.js';
+import { createFixtureDom } from './ui-dom-fixture.mjs';
+// Inject real exports into the VM fixture. This is not rendered-browser acceptance.
 const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
   .replace("import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing.js';\n", '')
   .replace("import { requirementProgress } from './requirement-progress.js';\n", '')
   .replace("import { executionReadiness } from './execution-readiness.js';\n", '')
-  .replace("import { runOutcome } from './run-outcome.js';\n", '');
+  .replace("import { runOutcome } from './run-outcome.js';\n", '')
+  .replace("import { resultLanguage } from './result-language.js';\n", '')
+  .replace("import { bindRrFileInput } from './rr-file-input.js';\n", '')
+  .replace("import { createProgressEvidence, canCheckFinalReport, finalReportAvailability, evidenceNotice } from './progress-evidence.js';\n", '');
+assert.doesNotMatch(source, /^import /m, 'register each actual frontend module in the fixture');
 const runtime = { ownership: 'AGENT', loginFirst: true };
 const turn = () => new Promise(r => setImmediate(r));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
-function fixture(fetcher, { confirmResult = true, history = [], storage = new Map([['rrJobId', 'job'], ['rrTargetName', 'Selected Event']]) } = {}) {
-  const elements = new Map();
-  const get = id => {
-    if (!elements.has(id)) {
-      const classes = new Set();
-      elements.set(id, { value: '', files: [], disabled: false, hidden: false, textContent: '', checked: false,
-        classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); } },
-        focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; }, querySelector() { return get('viewerIframe'); },
-        replaceChildren(...children) { this.children = children; }, append() {}, setAttribute() {} });
-    }
-    return elements.get(id);
-  };
-  let created = 0;
-  const confirmations = [];
-  const context = vm.createContext({ document: { getElementById: get, createElement: () => get(`created-${created++}`) }, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: text => { confirmations.push(text); return confirmResult; }, setInterval() {}, FormData: class { append() {} }, fetch: async (path, options) => { const data = await (path === '/api/jobs' && !options?.method ? history : fetcher(path, options)); return { ok: true, json: async () => data }; } });
-  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, requirementProgress, executionReadiness, runOutcome, AbortSignal, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
+function fixture(fetcher, { confirmResult = true, history = [], reportStatus = 404, storage = new Map([['rrJobId', 'job'], ['rrTargetName', 'Selected Event']]) } = {}) {
+  const {get,document}=createFixtureDom();
+  const confirmations = []; let fileOperation=null;
+  const trackedFileBinding=options=>bindRrFileInput({...options,onFile:file=>{
+    fileOperation=options.onFile(file);return fileOperation;
+  }});
+  const context = vm.createContext({ document, sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, confirm: text => { confirmations.push(text); return confirmResult; }, setInterval() {},
+    setTimeout(){return {};},clearTimeout(){},FormData: class { append() {} }, fetch: async (path, options) => {
+      // Report HEAD is a read, not a mutation to count in the existing test scenarios.
+      if(options?.method==='HEAD')return {ok:reportStatus===200,status:reportStatus,redirected:false};
+      const data = await (path === '/api/jobs' && !options?.method ? history : fetcher(path, options));
+      return { ok: true, status:200, json: async () => data };
+    } });
+  Object.assign(context, { workspaceBase, workspacePath, scopedStorage, requirementProgress, executionReadiness, runOutcome,
+    resultLanguage,bindRrFileInput:trackedFileBinding,createProgressEvidence,canCheckFinalReport,finalReportAvailability,evidenceNotice,
+    AbortSignal, location: { pathname: '/', origin: 'http://127.0.0.1:8788' }, window: { sessionStorage: context.sessionStorage } });
   const fetcherWithFixture = context.fetch;
   context.fetch = (path, options) => path === '/local-workspaces.json' ? Promise.resolve({ status: 404 }) : fetcherWithFixture(path, options);
   vm.runInContext(source, context);
+  // Compatibility convenience for these tests: dispatch the real registered change
+  // listener and await its actual newRR operation. Legacy filename-only fixture
+  // objects represent nonempty synthetic files; explicit sizes still test validation.
+  get('rr').onchange=async()=>{
+    get('rr').files=get('rr').files.map(f=>f.size===undefined?{...f,size:8}:f);
+    fileOperation=null;get('rr').dispatchEvent({type:'change'});
+    if(fileOperation)await fileOperation;await turn();
+  };
   return { get, context, storage, confirmations };
 }
-const response = (path, record) => path === '/api/runtime' ? runtime : path.endsWith('/results/state.json') ? {} : record;
+const response = (path, record) => path === '/api/runtime' ? runtime : path.endsWith('/results/state.json') ? {requirements:[]} : record;
 
+test('saved partial grouping survives a failed refresh without promoting raw completion',async()=>{
+  const row=Object.freeze({id:'partial',label:'Synthetic question',source:'Questions!A2',status:'partially_verified',verification:'Saved text read back',reason:'Choice code remains unchecked',presentation:{status:'partially_verified',action:'saved',summary:'Question text saved',nextAction:'Check the supplied choice code'}});
+  const progress={requirements:[row]},record=Object.freeze({id:'job',status:'INCOMPLETE'});let fail=false;
+  const f=fixture(path=>{if(path.endsWith('/results/state.json')){if(fail)throw Error('Read unavailable');return progress;}return response(path,record);});
+  await turn();assert.equal(f.get('changedPlain').children.length,1);assert.equal(f.get('pendingPlain').children.length,0);
+  assert.match(f.get('changedPlain').textContent,/Choice code remains unchecked/);
+  assert.equal(f.get('status').textContent,'Done — unfinished items');
+  assert.equal(requirementProgress(progress).pending.length,1);assert.equal(row.status,'partially_verified');
+  fail=true;await vm.runInContext('refresh()',f.context);await turn();
+  assert.equal(f.get('changedPlain').children.length,1);
+  assert.match(f.get('progressEvidenceNotice').textContent,/last successful snapshot, not current verification/);
+  assert.notEqual(f.get('status').textContent,'Done — configuration saved');assert.equal(record.status,'INCOMPLETE');
+});
+test('absent final report stays hidden rather than turning retained progress into a report',async()=>{
+  const f=fixture(path=>response(path,{id:'job',status:'STOPPED'}));await turn();
+  assert.equal(f.get('results').hidden,true);assert.equal(f.get('results').hasAttribute('href'),false);
+  assert.match(f.get('progressEvidenceNotice').textContent,/No final report is available/);
+});
+test('real file-input validation rejects empty and oversized fixture files before reset or upload',async()=>{
+  const posts=[],f=fixture((path,options)=>{if(options?.method)posts.push(path);return response(path,{id:'job',status:'STOPPED'});});await turn();
+  for(const size of [0,MAX_RR_BYTES+1]){
+    f.get('rr').files=[{name:'synthetic.xlsx',size}];await f.get('rr').onchange();
+    assert.match(f.get('message').textContent,/empty or unavailable|exceeds the 30 MB/);
+    assert.deepEqual(posts,[]);assert.equal(f.storage.get('rrJobId'),'job');
+  }
+});
 const readiness = (patch = {}) => ({ version: 1, scope: 'shared', checkedAt: new Date().toISOString(), capacity: 'AVAILABLE', holder: null,
   eventSafety: 'SCOPED_HOLDS', holdCount: 1, owners: [{ workspace: 3, jobId: '33333333-3333-4333-8333-333333333333', scope: 'event' }], ...patch });
 test('successful Clear removes only the form and keeps historical event holds visible', async () => {
@@ -93,7 +134,7 @@ test('a late pre-Clear readiness response cannot hide newer uncertainty', async 
   });
   await turn(); await f.get('newRR').onclick(); await turn();
   delayed.resolve(readiness({ eventSafety: 'CLEAR', holdCount: 0, owners: [] })); await turn();
-  assert.match(f.get('eventSafetyStatus').textContent, /require reconciliation/); assert.match(f.get('message').textContent, /Historical event reviews/);
+  assert.match(f.get('eventSafetyStatus').textContent, /require reconciliation/); assert.match(f.get('message').textContent, /Settled historical holds are retired for fresh runs; original evidence/);
 });
 
 for(const [status,note] of [['RELEASED',/No execution reservation remains/],['EMPTY',/No execution reservation remains/],['OTHER_WORKSPACE',/Another workspace owns execution capacity and was not changed/],['REVIEW_REQUIRED',/Capacity release still needs review/]])test(`workspace Clear sends explicit replacement and truthfully reports ${status}`,async()=>{
@@ -172,13 +213,13 @@ test('requirement statuses drive live bullets and polling counts without sending
   assert.match(f.get('pending').children[0].textContent, /Blocked.*Mapping missing/);
   assert.equal(f.get('excluded').children.length, 1); assert.equal(f.get('excludedProgress').hidden, false);
   assert.equal(f.get('progressLists').hidden, false);
-  assert.match(f.get('completionCount').textContent, /1 changed · 1 existing matches · 2 remaining · 1 excluded · not independent acceptance/);
+  assert.match(f.get('completionCount').textContent, /1 changed · 1 already correct in CVENT · 2 left · 1 excluded/);
   assert.equal(f.get('status').textContent, 'Running', 'progress does not promote job completion');
   progress = { requirements: [{ id: 'price', status: 'unverified' }] };
   await vm.runInContext('refresh()', f.context);
   assert.equal(f.get('completed').children[0].textContent, 'None');
   assert.match(f.get('pending').children[0].textContent, /Unverified · price/);
-  assert.match(f.get('completionCount').textContent, /0 changed · 0 existing matches · 1 remaining/);
+  assert.match(f.get('completionCount').textContent, /0 changed · 0 already correct in CVENT · 1 left/);
   assert.equal(f.get('excludedProgress').hidden, true); assert.deepEqual(posts, []);
 });
 
@@ -196,7 +237,7 @@ test('initialized RR progress exposes reported stage and read/edit/verify activi
     progress = { ...progress, currentAction: `${action} ATT-path: correct and verify` };
     await vm.runInContext('refresh()', f.context);
     assert.match(f.get('action').textContent, new RegExp(`Agent-reported: ${action}`));
-    assert.match(f.get('completionCount').textContent, /0 changed · 0 existing matches · 1 remaining/);
+    assert.match(f.get('completionCount').textContent, /0 changed · 0 already correct in CVENT · 1 left/);
     assert.equal(f.get('status').textContent, 'Running');
   }
   assert.deepEqual(posts, []);
@@ -227,7 +268,7 @@ test('exclusions alone stay visible and never count as completion', async () => 
   assert.equal(f.get('progressLists').hidden, false); assert.equal(f.get('excludedProgress').hidden, false);
   assert.equal(f.get('completionTitle').textContent, 'Stopped');
   assert.equal(f.get('completionMark').textContent, '■');
-  assert.match(f.get('completionCount').textContent, /unconfirmed remaining · 1 excluded/);
+  assert.match(f.get('completionCount').textContent, /work left: unknown · 1 excluded/);
 });
 
 test('requirement content renders as literal text, not workbook-supplied markup', async () => {
@@ -409,7 +450,7 @@ test('successful upload clears all prior run UI immediately even when runtime po
     if(path==='/api/runtime'&&pollFails)throw new Error('Temporary status read failure');
     if(path.endsWith('/results/state.json'))return {requirements:[{id:'OLD',label:'OLD completed work',status:'verified_changed'}]};
     return response(path,old);
-  },{history:[old,{id:'older-job',originalName:'OLDER.xlsx',status:'STOPPED'}]});
+  },{history:[old,{id:'older-job',originalName:'OLDER.xlsx',status:'STOPPED'}],reportStatus:200});
   await turn();assert.equal(f.get('results').hidden,false);assert.match(f.get('agentReply').textContent,/OLD answer/);
   f.get('answer').value='OLD reply';f.get('sessionInvalidated').checked=true;
   f.get('rr').files=[{name:'new.xlsx'}];await f.get('rr').onchange();
@@ -696,7 +737,7 @@ test('login handoff requires explicit action and security acknowledgement is not
 });
 
 test('settled reports cannot be answered, and malformed activity is not split into characters', async () => {
-  const f = fixture(path => path.endsWith('/results/state.json') ? { activity: 'Read-only recovery failed' } : response(path, { id: 'job', status: 'REVIEW_REQUIRED', phase: 'AWAITING_INPUT' }));
+  const f = fixture(path => path.endsWith('/results/state.json') ? { requirements: [], activity: 'Read-only recovery failed' } : response(path, { id: 'job', status: 'REVIEW_REQUIRED', phase: 'AWAITING_INPUT' }));
   await turn(); assert.equal(f.get('questionPanel').hidden, true);
   assert.equal(f.get('activity').children.length, 1); assert.equal(f.get('activity').children[0].textContent, 'Read-only recovery failed');
 });
@@ -854,17 +895,20 @@ test('execution status uses observed metadata instead of stale inventory or secu
   const f=fixture(path=>path.endsWith('/results/state.json')?{currentStage:'Inventory RR',currentAction:'Old inventory message',completed:['target-verified']}:response(path,record));
   await turn();assert.equal(f.get('stage').textContent,'Executing RR');assert.match(f.get('action').textContent,/bash finished/);
   assert.equal(f.get('agentReply').textContent,'');assert.equal(f.get('securityConfirmation').hidden,true);
-  assert.match(f.get('completionCount').textContent,/not independent acceptance/);assert.match(f.get('activity').children[0].textContent,/2030.*bash started/);
+  assert.equal(f.get('completionCount').textContent,'1 progress notes');
+  assert.equal(f.get('status').textContent,'Running','legacy notes do not establish saved completion');
+  assert.match(f.get('activity').children[0].textContent,/2030.*bash started/);
 });
 test('terminal run labels distinguish processing finished, verified complete, legacy uncertainty and Stop',async()=>{
   for(const status of ['DONE','INCOMPLETE','FINISHED','REVIEW_REQUIRED','STOPPED','STOPPED_REQUIRES_REVIEW']){
     const f=fixture(path=>path==='/api/runtime'?{ownership:'USER'}:path.endsWith('/results/state.json')?{completed:['saved-object'],currentAction:'Review required'}:response(path,{id:'job',status,reviewRequired:'Review saved results',lastAssistantText:'Created one item; another is blocked.'}));
     await turn();
-    const expected=status.includes('STOPPED')?'Stopped':status==='DONE'?'Done — verified complete':status==='INCOMPLETE'?'Done — unfinished items':'Ended — completion unverified';
+    const expected=status.includes('STOPPED')?'Stopped':status==='DONE'?'Done — configuration saved':status==='INCOMPLETE'?'Done — unfinished items':'Ended — completion unverified';
     for(const id of ['status','stage','completionTitle'])assert.equal(f.get(id).textContent,expected);
     assert.equal(f.get('outcomeSummary').hidden,false);
-    assert.match(f.get('outcomeSummary').textContent,status==='DONE'?/human decision/:/not completion|not that every requirement|historical run/);
-    if(status!=='DONE'){assert.equal(f.get('progressLists').hidden,false);assert.match(f.get('pending').children[0].textContent,/not itemized/);}
+    const summary=status.includes('STOPPED')?/Stopping does not undo changes/:status==='DONE'?/retained report for verification/:status==='INCOMPLETE'?/Some work is still unfinished/:/older run does not confirm completion/;
+    assert.match(f.get('outcomeSummary').textContent,summary);
+    if(status!=='DONE'){assert.equal(f.get('progressLists').hidden,false);assert.match(f.get('pending').children[0].textContent,/Completion and remaining work are unconfirmed/);}
     assert.match(f.get('agentReply').textContent,/Created one item/);
     assert.equal(f.get('take').disabled,true);
   }

@@ -1,104 +1,70 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { RUN_POLICY, RUN_SKILLS, RUN_SKILL_FILES } from '../app/run-policy.mjs';
+import {readFile} from 'node:fs/promises';
+import {RUN_POLICY, RUN_SKILLS, RUN_SKILL_FILES} from '../app/run-policy.mjs';
+// Instruction contracts, not proof of model interpretation or live execution.
+const root=new URL('../.pi/skills/cvent-event-build/',import.meta.url);
+const text=async name=>(await readFile(new URL(name,root),'utf8')).replace(/\s+/g,' ');
 
-// Offline source-contract regressions, not an Excel parser, paid model evaluation,
-// or proof that a live agent interpreted unseen workbooks correctly.
-const root = new URL('../.pi/skills/cvent-event-build/', import.meta.url);
-const text = async name => (await readFile(new URL(name, root), 'utf8')).replace(/\s+/g, ' ');
-
-test('contextual interpretation remains in the short one-skill task without changing the type-first or tool contracts', async () => {
-  assert.match(RUN_POLICY.executionInstructions, /Read every worksheet contextually/);
-  assert.ok(RUN_POLICY.executionInstructions.trim().split(/\s+/).length <= 120);
-  assert.match(RUN_POLICY.executionInstructions, /The RR defines the target configuration; live Cvent is the starting state/);
-  assert.match(RUN_POLICY.executionInstructions, /verified event selection, then RR-required\s+registration types/);
-  assert.deepEqual(RUN_SKILLS, ['cvent-event-build']);
-  assert.equal(RUN_SKILL_FILES.length, 17);
-  const main = await text('SKILL.md');
-  assert.match(main, /contextual interpretation rules.*rr-interpretation\.md/);
-  assert.match(main, /An uncertain external write is different: stop mutations and preserve its evidence/);
+test('one native task delegates layout discovery and execution order to the current skill',async()=>{
+ assert.deepEqual(RUN_SKILLS,['cvent-event-build']);assert.equal(RUN_SKILL_FILES.length,11);
+ const task=RUN_POLICY.executionInstructions.replace(/\s+/g,' ');
+ assert.match(task,/sheet order is not execution order/);
+ assert.match(task,/execute in the skill's order/);
+ assert.match(task,/references\/rr-interpretation.md/);
+ assert.match(task,/never replay unresolved writes/);
 });
-
-test('renamed, reordered and differently shaped tables must be discovered rather than matched to historical templates', async () => {
-  const rr = await text('references/rr-interpretation.md');
-  assert.match(rr, /do not depend on a fixed sheet count, spelling, column position, admission code or sample event/);
-  assert.match(rr, /Map unfamiliar headings to their business meaning/);
-  assert.match(rr, /Never fill down arbitrary blanks across different items or questions/);
-  assert.match(rr, /examples.*not requirements or evidence/i);
-  assert.doesNotMatch(rr, /Coconut Grove|EO-PB|EXONLY|PRESSED|F5|IGES|WPPI|Pizza Expo|NEW Reg Types & Pricing/);
+test('sheet positions, numeric prefixes and columns do not create fixed-template requirements',async()=>{
+ const rr=await text('references/rr-interpretation.md');
+ for(const phrase of ['names, headers and contents','Sheet position, numeric prefixes and column positions can change','not fixed worksheet indexes','Never include an excluded section','Do not physically reorder, rename or resave the bound original','Keep original sheet names and cell addresses','do not assume one fixed table shape','Never fill down across unrelated objects'])assert.ok(rr.includes(phrase),phrase);
+ assert.doesNotMatch(rr,/Coconut Grove|COL271|EO-PB|PRESSED|IGES|WPPI|Pizza Expo/);
 });
-
-test('different internal name, public caption and code are distinct properties, not invented aliases or automatic conflicts', async () => {
-  const rr = await text('references/rr-interpretation.md');
-  assert.match(rr, /internal names, display text, codes, registration types, admissions and resource UUIDs are different/);
-  assert.match(rr, /Different strings in those roles are not automatically contradictory/);
-  assert.match(rr, /registration type → admission identity → fee\/tier → path → discount eligibility/);
-  assert.match(rr, /Do not infer an alias between different codes from similar names or silently collapse variants/);
-  assert.match(await text('references/runner-contract.md'), /Unresolved aliases are blockers, not accepted inferred mappings/);
+test('names, display text, codes and UUIDs retain different roles and actual identity checks',async()=>{
+ const rr=await text('references/rr-interpretation.md');
+ assert.match(rr,/Internal names, display text, codes and resource UUIDs are distinct/);
+ assert.match(rr,/not automatically conflicts/);
+ assert.match(rr,/Resolve actual event resources before writes/);
+ assert.match(rr,/confirm that a matching code belongs to the intended item/i);
 });
-
-test('a clear RR difference from live state requires authorized execution, while true source conflicts retain both sources', async () => {
-  const rr = await text('references/rr-interpretation.md');
-  assert.match(rr, /A clear, authorized mismatch means configure and verify the requested change/);
-  assert.match(rr, /Current state alone cannot override the RR/);
-  assert.match(rr, /Never rank tabs by position, name, recency-looking labels or convenience/);
-  assert.match(rr, /same-property requirements for the same object remain incompatible, retain both sources/);
-  assert.match(rr, /Ask once per underlying decision/);
-  assert.match(await text('references/registration-and-pricing.md'), /differing current assignments alone do not make the request ambiguous/);
+test('filled intent, preservation and source conflicts follow client decisions rather than old escalation rules',async()=>{
+ const skill=await text('SKILL.md');
+ for(const phrase of ['Filled cell: make Cvent match it','Blank cell on something that already exists in Cvent: leave Cvent as it is','use 11 Registration Paths','choose the reading closest to what the doc says'])assert.ok(skill.includes(phrase),phrase);
+ assert.match(await text('references/runner-contract.md'),/originalExpected.*policy-derived intended result in expected/);
 });
-
-test('formula caches and comments require contextual evidence without global invalidation or silent disregard', async () => {
-  const rr = await text('references/rr-interpretation.md');
-  assert.match(rr, /formula-generated value is not inherently unreliable/);
-  assert.match(rr, /missing\/stale cache alone is not proof of conflicting intent/);
-  assert.match(rr, /Never execute arbitrary workbook expressions as shell\/code/);
-  assert.match(rr, /A local review warning does not automatically invalidate other rows or every formula/);
-  assert.match(rr, /explicitly table-wide warning must not be narrowed to one cell/);
-  assert.match(rr, /If the result cannot be established, block only dependent interpretation/);
+test('formulas, formats, comments and unresolved source data remain technical evidence',async()=>{
+ const rr=await text('references/rr-interpretation.md');
+ for(const phrase of ['openpyxl does not recalculate formulas','Missing/unread data is not a confirmed blank','Never execute arbitrary workbook code','zero differs from blank','fraction displayed as a percentage','Preserve formulas and established results'])assert.ok(rr.includes(phrase),phrase);
+ assert.match(rr,/parent questions, choices, codes, Notes and logic/);
 });
-
-test('blank semantics depend on the field legend, not a universal default or an invented tool capability', async () => {
-  const rr = await text('references/rr-interpretation.md');
-  assert.match(rr, /field-specific legend may explicitly define a blank as unrestricted or inherited/);
-  assert.match(rr, /record a capability blocker, not an intent question or permission to invent replacement dates/);
-  assert.match(rr, /Do not transfer a blank convention from one column\/category to another/);
-  assert.match(rr, /Explicit zero\/No values remain meaningful/);
-  assert.doesNotMatch(rr, /A blank date or `TBD` is not today's date or unlimited validity/);
-  const scope = await text('references/scope-and-intake.md');
-  assert.match(scope, /Blank does not mean off by itself/);
-  assert.match(scope, /Explicit off\/No or disabled/);
+test('blank and explicit None semantics come from the exact client skill, not removed field-legend rules',async()=>{
+ const skill=await text('SKILL.md');
+ assert.match(skill,/Blank cell on something that already exists/);
+ assert.match(skill,/Blank cell on something you are creating, where Cvent requires a value/);
+ assert.match(skill,/"None" in a date field means no date limit/);
+ assert.match(skill,/Money and other numbers: `0`/);
+ assert.match(skill,/Never use 0, because 0 blocks registration/);
+ const rr=await text('references/rr-interpretation.md');assert.match(rr,/fill-in rule is not a substitute for an unresolved resource, asset or tool capability/);
 });
-
-test('optional omissions do not manufacture requirements, but requested essential values and explicit off stay binding', async () => {
-  const scope = await text('references/scope-and-intake.md');
-  assert.match(scope, /A requested feature's missing essential input is a blocker/);
-  assert.match(scope, /same missing field on an unrequested optional feature is not automatically one/);
-  assert.match(scope, /preserve unrequested existing properties while implementing the requested differences/);
-  assert.match(scope, /Do not add synthetic blocked requirements or award completed-requirement credit/);
-  assert.match(scope, /Existing behavior that conflicts with a requested result is not protected/);
-  assert.match(scope, /Never silently preserve a conflicting enabled feature and claim compliance/);
-  assert.doesNotMatch(scope, /a missing instruction is unknown, not not-applicable/);
+test('unlisted leftovers stay preserved and excluded tabs cannot manufacture work',async()=>{
+ const skill=await text('SKILL.md');
+ assert.match(skill,/Anything in Cvent that isn't in the doc.*leave it alone/);
+ assert.match(skill,/Skip every other tab/);
+ assert.match(skill,/only rows where Item Type is "Admission Item"/);
+ assert.match(await text('references/runner-contract.md'),/Outside scope; receives no completion credit/);
 });
-
-test('baseline reuse requires actual approval, identity and verification rather than trusting existing defaults', async () => {
-  const scope = await text('references/scope-and-intake.md');
-  assert.match(scope, /explicitly supplied\/confirmed baseline whose identity\/version, governed categories and values are available for this job/);
-  assert.match(scope, /must not override a conflicting explicit RR instruction without a confirmed precedence decision/);
-  assert.match(scope, /No baseline supplied means no invented baseline approval/);
-  const verify = await text('references/verification.md');
-  assert.match(verify, /blanket “keep defaults” note cannot conceal a conflicting explicit requirement or missing essential input/);
-  assert.match(verify, /not silently disabled or credited as completed RR work/);
+test('current saved state must verify approved intent rather than become an invented baseline approval',async()=>{
+ const skill=await text('SKILL.md'),contract=await text('references/runner-contract.md');
+ assert.match(skill,/Look first. If Cvent already matches the doc, move on/);
+ assert.match(skill,/reopen or reload the page and check the saved value/);
+ assert.match(contract,/verified_existing.*Existing saved configuration matches the approved intent/);
+ assert.match(contract,/Before editing a verified item, revoke stale verification/);
+ assert.match(contract,/Do not invent provenance/);
 });
-
-test('domain and reporting references consistently distinguish optional notes, actual blockers and safety stops', async () => {
-  assert.match(await text('references/vouchers-and-rules.md'), /do not invent a toggle requirement solely because the category appears here/);
-  assert.match(await text('references/website-and-fields.md'), /Do not turn every listed field into a required customization/);
-  assert.match(await text('references/operating-model.md'), /checklist is a coverage aid, not a source of synthetic requirements/);
-  const contract = await text('references/runner-contract.md');
-  assert.match(contract, /Optional unrequested settings belong in report applicability notes/);
-  assert.match(contract, /distinguish missing essential input, unsupported capability and uncertain write outcomes/);
-  assert.match(contract, /Never clear a hold or replay a mutation/);
-  assert.match(await text('references/verification.md'), /\*\*STOPPED\*\* on operator Stop, identity\/control loss/);
-  assert.match(await text('references/runner-integration.md'), /Same-event builds cannot overlap/);
+test('ordinary failures allow independent work; real uncertainty and unsupported operations remain visible',async()=>{
+ const runtime=await text('references/runner-integration.md'),contract=await text('references/runner-contract.md');
+ assert.match(runtime,/Known pre-write failures block dependent requirements, not independent work/);
+ assert.match(runtime,/Possible effects with an unknown outcome/);
+ assert.match(runtime,/same-event claims/);assert.match(runtime,/Do not change another workspace/);
+ assert.match(contract,/Never clear a marker or replay a write/);
+ assert.match(contract,/No included|missing saved field/);
 });

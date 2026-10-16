@@ -7,10 +7,11 @@ import { join } from "node:path";
 import test from "node:test";
 import express from "express";
 import { PiRpc } from "../app/pi-rpc.mjs";
+import { GUARD_COMMAND } from "../app/diagnostic-guard.js";
 import { RUN_POLICY } from "../app/run-policy.mjs";
 import { isLocalRequest, eventTarget, eventName, resolveNamedEvent, mountRR } from "../app/rr-connection.mjs";
 
-function nativeFake(handler) {
+function nativeFake(handler, { guardCommands = [{ name: GUARD_COMMAND, source: 'extension' }] } = {}) {
   const commands = [];
   const child = new EventEmitter();
   Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
@@ -21,7 +22,7 @@ function nativeFake(handler) {
     while ((end = buffer.indexOf("\n")) >= 0) {
       const command = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
       commands.push(command.type);
-      const data = handler(command);
+      const data = command.type === 'get_commands' ? { commands: guardCommands } : handler(command);
       child.stdout.write(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data }) + "\n");
     }
   });
@@ -73,7 +74,7 @@ test("fresh session is idle, confirmed, changed; LF framing preserves Unicode", 
   let stateCalls = 0;
   const { rpc, child, commands } = nativeFake(command => command.type === "get_state" ? { sessionId: ++stateCalls === 1 ? "old" : "new", isStreaming: false, isCompacting: false, pendingMessageCount: 0, messageCount: 0 } : command.type === "get_session_stats" ? { cost: 0 } : { cancelled: false });
   assert.equal((await rpc.freshSession()).sessionId, "new");
-  assert.deepEqual(commands, ["get_state", "new_session", "get_state", "get_session_stats"]);
+  assert.deepEqual(commands, ["get_commands", "get_state", "new_session", "get_state", "get_session_stats"]);
   const events = []; rpc.on("event", event => events.push(event));
   const frame = Buffer.from(JSON.stringify({ type: "message_update", text: "é\u2028line\u2029end" }) + "\r\n");
   for (const byte of frame) child.stdout.write(Buffer.from([byte]));
@@ -83,7 +84,7 @@ test("never reset streaming, compacting or queued work; cancelled new_session bl
   for (const state of [{ isStreaming: true }, { isCompacting: true }, { pendingMessageCount: 1 }]) {
     const { rpc, commands } = nativeFake(() => state);
     await assert.rejects(rpc.freshSession(), /not idle/);
-    assert.deepEqual(commands, ["get_state"]);
+    assert.deepEqual(commands, ["get_commands", "get_state"]);
   }
   const { rpc } = nativeFake(command => command.type === "get_state" ? { sessionId: "old", isStreaming: false, isCompacting: false, pendingMessageCount: 0 } : { cancelled: true });
   await assert.rejects(rpc.freshSession(), /not confirmed/);
@@ -97,6 +98,13 @@ test("fresh session rejects inherited conversation or spending before any prompt
   }
 });
 
+test('missing or incorrectly registered diagnostic guard prevents all session setup and prompts', async () => {
+  for (const guardCommands of [[], null, [{ name: GUARD_COMMAND, source: 'prompt' }], [{ name: 'unrelated', source: 'extension' }]]) {
+    const {rpc,commands}=nativeFake(()=>assert.fail('must not inspect/reset session without guard'),{guardCommands});
+    await assert.rejects(rpc.freshSession(),/Required diagnostic guard did not load/);
+    assert.deepEqual(commands,['get_commands']);
+  }
+});
 test("runner transport has no historical-session restoration helper", () => {
   assert.equal(PiRpc.prototype.resumeSession, undefined);
 });
@@ -313,7 +321,7 @@ test("job lifecycle: isolated originals, login gate, durable cost, scoped RPC, S
   assert.equal(fake.commands[0].type, "new_session");
   const prompt = fake.commands.find(c => c.type === 'prompt');
   assert.match(prompt.message, /original.xlsx/);
-  assert.match(prompt.message, /Read every worksheet/);
+  assert.match(prompt.message, /Discover the workbook's layout using the source guide/);
   assert.doesNotMatch(prompt.message, /allowanceUSD|targetCostUSD|externalCostReserveUSD|priorEventCostUSD|\$60/);
   const initialState = JSON.parse(await readFile(join(first.workspace, 'state.json'), 'utf8'));
   assert.equal(initialState.currentStage, 'Executing RR');

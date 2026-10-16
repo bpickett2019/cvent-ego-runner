@@ -1,7 +1,9 @@
 # Ego on the assigned Steel session
 
-The unmodified Ego v2.0.0 skill and API reference run on upstream Ego commit
+The assigned browser uses Ego v2.0.0 at upstream commit
 `dca7003349c5f7132189ba00547cbbd7ff8e597e`, through the existing Steel host.
+The bundled controls are adapted to this host; the upstream API reference supplies
+signatures only. [SKILL.md](../../../SKILL.md) supplies business policy.
 This is not the desktop Ego Lite application. Do not install, upgrade, launch,
 or select another browser or profile to resolve a missing host capability.
 
@@ -124,27 +126,16 @@ or select another browser or profile to resolve a missing host capability.
   boundaries and on its two-second monitor, independently of shell exit status.
   A successful later command cannot mask it; quoted stdout alone cannot create it. Never delete it, reopen the stopped save, or use the helper as a repair
   tool for historical uncertainty. The app's uncertainty stop has no automatic retry.
-- For the bound RR build, create or modify existing objects,
-  settings and relationships only when their effects are confined to the selected
-  event, including admission items and pricing. Existing shared/account-wide
-  definitions and defaults remain protected. The current business policy prohibits
-  shared contact-type creation as well as shared edits/removals. Reuse existing
-  definitions; configure only supported event-local assignments.
-  Prove scope before writing: an event URL or a newly created template alone
-  does not prove isolation. Event-only type/path
-  assignments differ from shared contact-type definitions. Unknown scope blocks
-  the affected change; continue independent safe work.
-  Necessary in-scope event-exclusive object removal/replacement is authorized by ../../change-policy.md. The current browser adapter lacks a verified object-removal operation and its existing deletion guard remains closed until one is implemented. This is a capability blocker, not a blanket business prohibition. Event deletion/archive, shared changes and evidence deletion remain prohibited.
-  This authorization does not unlock blocked navigation or operations. Do not probe
-  or bypass a guard; report the specific tool limitation. Keep the event Draft.
-- Follow the configuration order in ../../../SKILL.md: Event details
-  before Registration Types and the remaining included stages. Pi chooses supported
-  controls within each stage, not a different stage order. Verify saved values and dependencies;
-  creating a new template does not prove field isolation. A concrete blocker skips
-  dependent work, not independent executable requirements.
-  In Site Designer, Continue retains current work; Restore can replace it. Do not
-  restore historical state as a workaround. Website requirements do not necessarily
-  require enabling Cvent's separate Website feature; inspect the applicable editor.
+- Establish event-only effects before authoring. An event URL or newly created
+  template alone does not prove isolation. Event assignments differ from shared
+  definitions; unknown scope blocks the affected operation. The browser adapter
+  lacks a verified object-removal operation and its deletion guard remains closed.
+  Do not probe/bypass it or treat business policy as an executable capability.
+- Discover supported controls within the skill's stage order. Read-only prerequisite
+  discovery does not authorize out-of-order authoring. In Site Designer, Continue
+  retains current work; Restore can replace it. Do not restore historical state as
+  a workaround. Website requirements do not necessarily require enabling Cvent's
+  separate Website feature; inspect the applicable editor.
 - Every upload is a fresh execution from its workbook and live saved event state,
   not a continuation of earlier tasks or browser position. Historical evidence
   does not instruct this run. Never change uncertainty records or ownership gates.
@@ -169,12 +160,9 @@ or select another browser or profile to resolve a missing host capability.
   catalog reads as described by [discounts](../../discounts.md); other Cvent work uses Ego.
   Raw HTTP/standalone API helpers and non-discount API writes are not authorized.
   Never bypass an API denial or uncertain write through the browser.
-  The Cvent skills' operating boundaries govern authorization; SDK capabilities
-  do not expand it. The current SKILL.md supplies business decisions/defaults and
-  configuration-only acceptance. No registration preview is required. The technical
-  readback, ownership, uncertainty and Save restrictions above remain in force.
-  A concurrent-editor banner alone follows the skill's save-and-disclose policy;
-  an actual denied operation or uncertain write may never be bypassed.
+  SDK capabilities do not expand authorization. Follow the primary skill for
+  business decisions, warning disclosures and acceptance; the technical readback,
+  ownership, uncertainty and Save restrictions above remain in force.
 
 The patch is also saved as `ego-bridge/patches/steel-session-ledger.patch` so
 it survives a fresh submodule checkout. From the project root, on an unpatched

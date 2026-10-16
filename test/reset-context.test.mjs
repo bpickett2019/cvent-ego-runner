@@ -146,7 +146,8 @@ test('Clear commits a durable empty context; repeated Clear is fresh and starts 
   assert.equal(a.body.cleared, true); assert.equal(a.body.aiStarted, false);
   assert.equal(a.body.clearScope, 'CURRENT_RR_CONTEXT'); assert.equal(a.body.executionHoldsCleared, false); assert.equal(a.body.sharedSlotReleased, false);
   assert.equal(a.body.historyPreserved, true); assert.equal(a.body.spendingPreserved, true);
-  assert.deepEqual(a.body.rrContext, { id: a.body.rrContext.id, workbookId: null, jobId: null });
+  assert.deepEqual(a.body.rrContext, { id: a.body.rrContext.id, workbookId: null, jobId: null, freshResetId: a.body.rrContext.freshResetId });
+  assert.match(a.body.rrContext.freshResetId, /^[0-9a-f-]{36}$/);
   assert.match(a.body.rrContext.id, /^[0-9a-f-]{36}$/);
   assert.deepEqual(JSON.parse(await readFile(join(f.root, 'data/rr-context.json'))), a.body.rrContext);
   const b = await f.clear({}); assert.equal(b.status, 200); assert.notEqual(b.body.rrContext.id, a.body.rrContext.id);
@@ -171,6 +172,8 @@ async function settledUncertain(f, patch = {}) {
 
 for (const action of ['clear', 'replace']) test(`${action} preserves a settled uncertain run, costs and cross-workspace hold while creating a fresh context`, async t => {
   const f = await fixture(t), old = await settledUncertain(f), before = f.connection.context();
+  const other=await fixture(t);await settledUncertain(other);
+  const otherInventory=eventHoldInventory(other.root,2);assert.equal(otherInventory.holds.length,1);
   const paths = ['job.json', 'browser-save-uncertain.json', 'original.xlsx'];
   const bytes = await Promise.all(paths.map(p => readFile(join(old.workspace, p))));
   assert.equal(executionSafety(f.root, old.id).resourcesCleared, true);
@@ -183,14 +186,24 @@ for (const action of ['clear', 'replace']) test(`${action} preserves a settled u
   }
   const after = f.connection.context(); assert.notEqual(after.id, before.id); assert.equal(after.jobId, null);
   assert.equal(f.connection.budget().spentUSD, 2.5);
-  assert.deepEqual(eventHoldInventory(f.root, 1), inventory, 'old event hold still published after reset');
-  assert.equal(executionSafety(f.root, old.id).cleared, false, 'reset is not reconciliation');
+  assert.deepEqual(eventHoldInventory(f.root, 1), {...inventory,holds:[]}, 'explicit reset retires only unchanged settled own-workspace holds');
+  assert.deepEqual(eventHoldInventory(other.root,2),otherInventory,'another workspace hold is unaffected');
+  const safety=executionSafety(f.root,old.id);
+  assert.equal(safety.cleared,false,'reset is not reconciliation');assert.equal(safety.uncertaintyBlocked,true);
+  assert.equal(safety.historicalHoldRetired,true);
+  const receiptPath=join(f.root,'data/fresh-resets',`${after.freshResetId}.json`),receiptBytes=await readFile(receiptPath);
+  const receipt=JSON.parse(receiptBytes);assert.equal(receipt.savedResultVerified,false);assert.equal(receipt.oldSessionResumable,false);
+  assert.ok(receipt.holds.some(h=>h.jobId===old.id));
   for (let i = 0; i < paths.length; i++) assert.deepEqual(await readFile(join(old.workspace, paths[i])), bytes[i]);
   assert.equal(f.launches(), 0); assert.equal(f.browsers(), 0);
   const reopened = await fixture(t, { root: f.root });
   assert.deepEqual(reopened.connection.context(), after, 'restart does not resurrect old selection');
-  assert.deepEqual(eventHoldInventory(f.root, 1), inventory);
+  assert.deepEqual(eventHoldInventory(f.root, 1), {...inventory,holds:[]});
   assert.equal((await f.request('/api/new-rr', { jobId: old.id, contextId: before.id })).status, 409);
+  await writeFile(join(old.workspace,'browser-save-uncertain.json'),JSON.stringify({eventId:old.target.apiEventId,outcome:'NEW_UNVERIFIED_EVIDENCE'}));
+  assert.equal(executionSafety(f.root,old.id).historicalHoldRetired,false,'changed evidence reactivates protection');
+  assert.deepEqual(eventHoldInventory(f.root,1),inventory);
+  assert.deepEqual(await readFile(receiptPath),receiptBytes,'the acknowledgement is immutable');
 });
 
 test('failed replacement preview after uncertain-run cleanup retains selection and all history', async t => {
