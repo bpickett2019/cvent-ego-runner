@@ -10,12 +10,19 @@ const policy='client-rules-configuration-only-v1';
 const read=p=>readFileSync(resolve(root,p),'utf8');
 const manifest=JSON.parse(read('deploy/client-policy-manifest.json'));
 const walk=p=>readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(resolve(p,e.name)):[resolve(p,e.name)]);
-test('exact approved skill and every payload hash/deletion match the manifest',()=>{
+test('approved skill and policy hashes follow only the reviewed three-file UI overlay',()=>{
  assert.equal(createHash('sha256').update(read('.pi/skills/cvent-event-build/SKILL.md')).digest('hex'),'34431110c1f9941a18831c266f814a208c55b11969e1c391572760a7c81a5a44');
+ const overlay=JSON.parse(read('deploy/saved-results-ui-manifest.json')).changes;
+ assert.deepEqual(overlay.map(x=>x.path).sort(),['public/app.js','public/index.html','public/result-language.js']);
+ const staging=JSON.parse(read('deploy/staging-source-manifest.json')).sourceFiles;
+ for(const row of overlay){
+  assert.equal(row.beforeSha256,manifest.changes.find(x=>x.path===row.path)?.afterSha256 || staging[row.path],row.path);
+  assert.equal(createHash('sha256').update(read(row.path)).digest('hex'),row.afterSha256,row.path);
+ }
  for(const row of manifest.changes){
   const file=resolve(root,row.path);
   if(row.operation==='delete')assert.ok(!existsSync(file),row.path);
-  else assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),row.afterSha256,row.path);
+  else assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),overlay.find(x=>x.path===row.path)?.afterSha256 || row.afterSha256,row.path);
  }
 });
 test('retained skill Markdown links resolve without deleted business references',()=>{

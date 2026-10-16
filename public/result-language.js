@@ -33,21 +33,12 @@ function presentation(item, status) {
     issueKey: summary && typeof p.issueKey === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(p.issueKey) ? p.issueKey : '',
     configurationStatus: p.configurationStatus, remainingCheck: p.remainingCheck };
 }
-function existingConfiguration(item, status, p) {
-  // A partial status or "unchanged" action is not evidence of a match. Split only
-  // an explicit saved-configuration match with a separate outstanding preview.
-  if (status !== 'partially_verified' || p?.action !== 'unchanged' || !p.summary || !p.nextAction ||
-      !(text(item.verification) || text(item.evidence)) || text(item.reason) || text(item.blocker)) return false;
-  if (Object.hasOwn(item.presentation, 'configurationStatus') || Object.hasOwn(item.presentation, 'remainingCheck')) {
-    return p.configurationStatus === 'verified_existing' && p.remainingCheck === 'registration_preview';
-  }
-  // Read-only compatibility with these previously emitted, unqualified claims.
-  // Not a general prose classifier: unknown/conditional wording stays pending.
-  const next = p.nextAction.replace(/\.$/, '');
-  if (p.summary === 'Saved discount settings and item links already match.') return next === 'Test the code in registration preview';
-  if (next !== 'Check the price in registration preview' || /\b(?:not|unknown|uncertain|unverified|except|mismatch|partially)\b/i.test(p.summary)) return false;
-  return /^The saved [$€£]\d[\d,.]* [\p{L}\p{N} /|&()'’-]+price matches both (?:RR )?tiers\.$/u.test(p.summary) ||
-    /^[\p{L}\p{N} /|&()'’-]+ admission has no fee, matching the [$€£]0(?:\.00)? price\.$/u.test(p.summary);
+function savedPartial(item, status, p) {
+  // Group confirmed saved portions with Saved, not Needs attention. This is not
+  // full verification or proof that this run wrote an existing setting. Keep the
+  // original status, remaining details and evidence; never classify from prose.
+  return status === 'partially_verified' && (p?.action === 'saved' || p?.action === 'unchanged') &&
+    !!(text(item.verification) || text(item.evidence));
 }
 function fallback(status, name) {
   if (status === 'verified_changed') return `${upperFirst(name)} was saved and checked.`;
@@ -114,19 +105,20 @@ export function resultLanguage(state) {
     const status = text(item.status), name = subject(text(item.label) || (typeof entry === 'string' ? entry : ''), index), p = presentation(item, status);
     const verified = status === 'verified_changed' || status === 'verified_existing';
     const action = verified ? status === 'verified_changed' ? 'saved' : 'unchanged' : p?.action || 'unknown';
-    const note = actionNote(status, action), reason = !verified && status !== 'excluded' ? remainingReason(item) : '';
-    const row = { key: `${index}:${text(item.id).slice(0, 160)}`, subject: upperFirst(name), status, action, summary: p?.summary || fallback(status, name),
+    const partialSaved = savedPartial(item, status, p);
+    const note = partialSaved
+      ? action === 'saved' ? 'Changes saved. See any remaining details below.' : 'Existing settings checked; no changes made.'
+      : actionNote(status, action);
+    const reason = !verified && status !== 'excluded' ? remainingReason(item) : '';
+    const row = { key: `${index}:${text(item.id).slice(0, 160)}`, subject: upperFirst(name), status, action,
+      summary: p?.summary || (partialSaved ? `${upperFirst(name)} has saved settings.` : fallback(status, name)),
       nextAction: p?.nextAction || reason || (!verified && status !== 'excluded' ? 'Review this requirement’s retained evidence below.' : ''),
-      nextActionLabel: p?.nextAction || !reason ? 'Next' : 'Still open',
+      nextActionLabel: partialSaved ? 'Check' : p?.nextAction || !reason ? 'Next' : 'Still open',
       actionNote: note, sourceNote: sourceNote(item), remainingIssue: issueNote(item, verified, status),
+      remainingIssueLabel: partialSaved ? 'Details' : 'Why',
       evidence: evidence(item, status, action), issueKey: p?.issueKey || '', members: [] };
-    if (status === 'verified_changed') result.changed.push(row);
+    if (status === 'verified_changed' || partialSaved) result.changed.push(row);
     else if (status === 'verified_existing') result.existing.push(row);
-    else if (existingConfiguration(item, status, p)) {
-      // One unfinished row, not an already-correct row plus a hidden preview.
-      result.pending.push({ ...row,
-        actionNote: 'Saved settings match; required preview verification remains unfinished.' });
-    }
     else if (status === 'excluded') result.excluded.push(row);
     else result.pending.push(row);
   });

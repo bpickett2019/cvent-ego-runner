@@ -81,7 +81,7 @@ function renderNaturalResults(progress, checkpoints, outcome) {
     const more = node('div', ''); more.className = 'result-more';
     if (row.actionNote) { const action = node('p', row.actionNote); action.className = 'result-action-note'; li.append(action); }
     if (row.sourceNote) li.append(node('p', `Source: ${row.sourceNote}`));
-    if (row.remainingIssue) li.append(node('p', `Why: ${row.remainingIssue}`));
+    if (row.remainingIssue) li.append(node('p', `${row.remainingIssueLabel || 'Why'}: ${row.remainingIssue}`));
     if (row.nextAction) { const next = node('p', `${row.nextActionLabel || 'Next'}: ${row.nextAction}`); next.className = 'result-next'; li.append(next); }
     if (row.members.length) {
       const members = node('ul', ''); members.className = 'result-list'; members.append(...row.members.map(x => renderRow(x, true)));

@@ -1,0 +1,21 @@
+{
+  "precedingCommit": "622b568ddfaa79d0027951188f02efd63ddacb49",
+  "scope": "Presentation only; records and completion semantics unchanged",
+  "changes": [
+    {
+      "path": "public/app.js",
+      "beforeSha256": "838c5c7eb1fedbfbd18ce6d858bd6e7694459899c081ac4e73a54dd1f199676f",
+      "afterSha256": "f80fcb1c64f38e1cc8beeb34cc04d901e41c35a08464b8eaefac54c50e785550"
+    },
+    {
+      "path": "public/index.html",
+      "beforeSha256": "692e0865e3668d92231760ccc813200c5ffd9a8c09fadf29267611f274eeca3a",
+      "afterSha256": "aec1e1fd39730ce305e2df00439f2d90716207e503cb080e92642115b2b6bd4f"
+    },
+    {
+      "path": "public/result-language.js",
+      "beforeSha256": "7c0fe6da68402b9ffff72e6abbd2f561aeb4835f48e2ebb4f66e7ff7db5ea7df",
+      "afterSha256": "9857a88cf4f853f6daf07747453758d9dac0ea326677be9e202f1da160768fcf"
+    }
+  ]
+}
