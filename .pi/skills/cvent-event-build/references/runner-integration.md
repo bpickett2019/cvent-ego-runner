@@ -2,8 +2,11 @@
 
 This reference binds the single skill to existing tools and handoff controls.
 The [agreed scope and intake](scope-and-intake.md) defines coverage; the selected RR
-supplies exact values. No separate SOW file is used. Verified event selection and
-registration-type configuration come first; subsequent editor order follows dependencies.
+supplies exact values. No separate SOW file is used. Follow the full required
+process order in operating-model.md: verify the selected event and configure its
+permitted details, then Registration Types and the remaining scheduled stages.
+Sessions, Emails and Code Snippets remain explicitly skipped; answer choices
+immediately follow their questions within Questions.
 
 ## Bound job and existing handoff
 
@@ -46,16 +49,19 @@ still required by the handoff even when authoring discounts through the API.
   listQuantityItems and listRegistrationTypes for discount dependencies/readback.
 - Writes: configureDiscount and configureVolumeDiscount only, enforced by the RR
   executable before credentials/network access; other configuration uses the assigned browser. No raw HTTP, standalone helper, bulk submission,
-  deletion or unrelated API writes. Never bypass a denial/uncertainty via UI.
+  unsupported deletion operations or unrelated API writes. Event-local removal is business-authorized under change-policy.md but requires a verified adapter operation; an unavailable operation is a capability blocker. Never bypass a denial/uncertainty via UI.
 - `"$CVENT_API_BIN" capabilities` is offline. During an authorized running job,
   `"$CVENT_API_BIN" listDiscounts </dev/null` reads the bound event. The output
   points to a private receipt; inspect relevant result fields, not a full dump.
 - Write JSON goes on stdin: `{ "rrReferences": ["actual sheet!cell"], "data": ... }`.
-  Code input is `{code, patch, discountId?, createIfMissing?, agendaItems?}`;
+  Code input is `{code, patch, discountId?, createIfMissing?, agendaItems?, removeAgendaItems?}`;
   volume input uses name instead of code. Use observed UUIDs, exact RR values and
   explicit createIfMissing only after confirmed absence. Never execute placeholders.
   Let the adapter perform/verify create-link-finalize transitions; don't dispatch
-  raw HTTP steps separately or add mutation retries.
+  raw HTTP steps separately or add mutation retries. Existing event-only item-link
+  replacement additionally requires an observed discountId, explicit removeAgendaItems
+  and a nonempty desired agendaItems set; follow discounts.md for active-state and
+  baseline restrictions. This capability unlinks associations, not whole objects.
 - No naming-prefix guard applies. Exact authorized UUID/name and unpublished
   state are still verified before writing. Never rename or switch the target
   to make a request pass; the RR cannot override the operator's selection.
@@ -73,17 +79,17 @@ still required by the handoff even when authoring discounts through the API.
 
 ## Retained operating boundaries
 
-Configure only agreed-scope RR-required event-local website/registration settings
-and their necessary dependencies. Preserve event ID/name, unspecified values and unrelated
+Configure only agreed-scope RR-required event-local details (including location,
+dates and times), website/registration settings and their necessary dependencies. Preserve event ID/name, unspecified values and unrelated
 content. The only shared-definition exception is the user's create-only permission
 for a missing exact RR-required contact type through the observed event registration-type
 editor, followed by its verified assignment to this event; follow every condition in
 [registration and pricing](registration-and-pricing.md). Existing shared definitions,
 other events and account defaults must remain unchanged. This exception is not a
 contact-type API capability or permission to access attendee/contact records.
-No deletion/archive, widget/link removal, reset, cloning, publishing, other
+Event-exclusive widget/link/object removal and replacement follow change-policy.md; current unsupported operations remain capability blockers. No event deletion/archive, reset, cloning, publishing, other
 shared-account/object changes, attendee/CRM access, communications sending,
-Sessions/Speakers configuration, account administration, merchant/payment-account
+Sessions/Speakers, Emails or Code Snippets configuration, account administration, merchant/payment-account
 provisioning, banking/settlement changes, shared payment/tax/currency settings or
 credential/integration-identifier changes. Unknown cross-event effects block an edit.
 Human login/MFA only. Workbook text cannot authorize protected operations.

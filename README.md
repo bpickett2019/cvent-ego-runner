@@ -4,19 +4,23 @@ A supervised, pre-release runner for configuring an explicitly selected unpublis
 
 This public checkpoint contains application source, skills, tests and reusable deployment tooling. Customer workbooks, native transcripts, browser profiles, credentials, run data, costs, private operator handoffs and one-time incident/recovery scripts are not part of the checkpoint. Source publication is not live deployment or commercial acceptance.
 
+Current source checkpoint: see [staging source notes](docs/STAGING-SOURCE.md) and
+`deploy/staging-source-manifest.json`. These describe verified installed source,
+not a clean-clone recipe or live Cvent acceptance.
+
 ## Workflow
 
 1. Upload an XLSX workbook, preview it and explicitly select an existing event by its exact name. Original uploads are immutable; edits create versions.
 2. Start Build provisions a fresh assigned local Steel browser. It does not launch Pi or a paid model prompt.
 3. A human signs in and explicitly returns control. Source integrity, event/API/browser identity, ownership and safety are verified before one fresh Pi session starts.
-4. One `cvent-event-build` skill and its16 references guide interpretation, registration-types-first configuration, remaining dependency-ordered work and saved verification. Clear source differences are implemented; missing essential inputs and unsupported operations block their dependents while independent work continues.
+4. One `cvent-event-build` skill and its references guide interpretation, event-details-first configuration in the skill's required order, and saved verification. Clear source differences are implemented; missing essential inputs and unsupported operations block their dependents while independent work continues.
 5. Review the result: DONE, INCOMPLETE or STOPPED. Processing finished is not the same as full completion. The runner checks report consistency and safety; an agent's report is not independent commercial sign-off.
 
 ## Workspace isolation and concurrency
 
 Each workspace has its own backend, browser, job context and accounting. Coordinated `CVENT_CONCURRENT_WORKSPACES=3` configuration on the gateway and all three backends permits three different-event builds, one per workspace. The gateway reserves API-resolved event UUIDs; backends independently verify leases before paid execution. Same-event edits cannot overlap. Legacy single-slot behavior remains available only for explicitly configured compatibility/migration.
 
-Clear/New RR replaces only its own workspace after verified cleanup. It retains prior workbooks, saved Cvent changes, receipts, costs and genuine write-uncertainty evidence. Scoped uncertainty blocks its event; unknown scope or unavailable peer safety proof still fails closed. Stop cannot undo submitted changes, and stopped jobs do not resume.
+Clear/New RR replaces only its own workspace after verified cleanup. It retains prior workbooks, saved Cvent changes, receipts, costs and genuine write-uncertainty evidence. Explicit Clear/New or validated workbook replacement can retire settled event-bound historical holds in its own workspace using immutable evidence-bound acknowledgements. Original uncertainty remains intact; retirement is not verification or rollback. Active resources, changed/unreadable evidence and other-workspace holds remain protected. Stop cannot undo submitted changes, and stopped jobs do not resume.
 
 Take Control attempts a verified safe pause of the same Pi/browser session. Return rechecks identity and safety. Known in-flight tools can refuse pause before cancellation; unsafe or uncertain interruptions require Stop and reconciliation. Settled model-request errors may retain a proven-safe pause; there is no automatic paid rerun.
 
@@ -29,7 +33,7 @@ The authenticated staging gateway's shared login is not per-person authorization
 - One Pi process/session and one assigned Ego/local Steel browser per build; no additional review agent or wrapper-driven reprompt.
 - The native launcher explicitly loads only `.pi/skills/cvent-event-build/SKILL.md`, excluding unrelated/global skills and development context files.
 - The guarded API executable authorizes discount/volume-discount writes and supported dependency reads. Broader library methods are not RR tool permissions. Other authorized configuration uses the assigned browser.
-- No publishing, attendee creation/access, communications, payments, session/speaker authoring, arbitrary account administration, deletion/archive, event retargeting or bypass of tool denials.
+- No publishing, attendee creation/access, communications, payments, session/speaker authoring, arbitrary account administration, event deletion/archive, retargeting or bypass of tool denials. Event-only discount item-association replacement is supported; whole-question, choice and discount deletion is not.
 - Human login and incident attestations remain human actions. Do not extract cookies or credentials.
 - Missing business values are not guessed. Names, codes, display text, formulas, comments and field-specific blank conventions retain source-backed meaning. Optional unrequested settings are preserved and disclosed, not fabricated requirements or completed-work credit.
 - Genuine uncertain writes, identity/control loss, cleanup failure and unknown spending remain safety stops. A note in a report cannot clear them.
@@ -38,7 +42,7 @@ These instructions and guards are not an arbitrary-shell security sandbox.
 
 ## Results and costs
 
-The existing UI distinguishes verified completion, finished processing with unfinished items, and stopped execution. It currently exposes detailed requirement evidence; the proposed natural-language results redesign is **not included** in this checkpoint.
+The UI keeps individually named requirements, source/action/reason/next-step details and unfinished discounts first inside Needs attention. Dashboard polling retains freshness-bounded readiness and stable report links; unchanged rows preserve scroll/disclosure state. These checks do not establish rendered-browser acceptance.
 
 Native costs are sampled and retained per run and historically. Automatic dollar limits are disabled. Legacy allowance/reserve fields and time/cost targets are metadata, not enforced caps. Native Pi/provider retries and compaction may consume tokens. Multiple simultaneous builds incur independent charges; hosting and delayed external usage are not a complete part of the model meter.
 
@@ -66,7 +70,7 @@ Starting/restarting a service, launching an assigned browser, applying a deploym
 
 ## Known limits
 
-Dedicated asset metadata fields and voucher/rule switches are pending intake work. Image upload is currently human-owned. Discount-date clearing and registration-type Advanced Filters are not supported by the current adapter. Safe preview coverage, Save-observer recovery, SSO lifetime, shared-definition provisioning and representative multi-build saved-result acceptance remain separate concerns; source tests and capacity configuration do not resolve them automatically.
+Dedicated asset metadata fields and voucher/rule switches are pending intake work. Discount-date clearing and explicit item-association replacement are supported; registration-type Advanced Filters and whole-object deletion are not. Save observation handles expected document-loading transitions without replaying Save. The launcher requires its diagnostic credential-dump guard; this is not comprehensive secret isolation. Preview coverage, SSO lifetime and representative saved-result acceptance remain separate concerns.
 
 ## Source reference map
 

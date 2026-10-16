@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 export const RUN_SKILLS = Object.freeze(["cvent-event-build"]);
 export const RUN_SKILL_FILES = Object.freeze([
   "SKILL.md", "references/scope-and-intake.md", "references/operating-model.md",
-  "references/rr-interpretation.md", "references/runner-integration.md", "references/runner-contract.md",
+  "references/rr-interpretation.md", "references/registration-type-mapping-guide-v2.md",
+  "references/runner-integration.md", "references/runner-contract.md",
   "references/website-and-fields.md", "references/assets.md", "references/registration-and-pricing.md",
   "references/discounts.md", "references/vouchers-and-rules.md", "references/verification.md",
   "references/browser/controls.md", "references/browser/references/api.md",

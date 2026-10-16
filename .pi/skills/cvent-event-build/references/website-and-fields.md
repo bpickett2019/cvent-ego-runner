@@ -14,11 +14,11 @@ This skill describes desired configuration; it does not itself implement Site De
 
 ## Use this reference within the single build
 
-Read [operating model](operating-model.md). After completing or specifically blocking the RR registration-types-first pass, choose website work by the RR, current event and dependencies. Blocked type-dependent registration widgets do not prevent independent branding/content work. Keep theme, assets, headers/footers, pages and widgets together in this reference; don't split by widget or assume a universal site layout.
+Read [operating model](operating-model.md). Follow the full required process order: Website follows Volume Discounts, then Footer Links, then Registration Paths and Questions. Complete or specifically block executable requirements in each preceding stage before advancing. Blocked type-dependent registration widgets do not prevent independent branding/content work in its scheduled stage. Keep theme, assets, headers/footers, pages and widgets together in this reference; don't split by widget or assume a universal site layout.
 
 Treat the sections below as domain coverage, not a default build checklist. Discover the actual designer through Ego and select supported controls from current observations. Historical menu labels, selectors and example events are not fixed recipes. Ask for missing business intent/assets when necessary, not routine navigation decisions that inspection can resolve.
 
-Use the same event/session and source mappings as the registration and discount work. Carry observed page/widget/path identities and saved results forward; revisit a dependency when needed rather than creating placeholder links or guessing an unfinished path. Apply only the design this RR/reference calls for.
+Use the same event/session and source mappings as the registration and discount work. Carry observed page/widget/path identities and saved results forward. If a link needs a path not yet created, leave that relationship explicitly unfinished until the Registration Paths stage verifies the intended URL, then complete and independently verify only the deferred connection. Do not author paths early, create placeholder links or guess an unfinished path. Apply only the design this RR/reference calls for.
 
 ## Bind the website and its source
 
@@ -43,9 +43,11 @@ Configure supplied content, logos, links, navigation, contact/legal text and lay
 
 For this event, add/configure only the widgets required by its RR/reference. Use the agreed category checklist to detect omissions; do not invent additional widget requirements. If a required type is unavailable, identify the specific blocker instead of replacing it with a text widget and claiming equivalence.
 
-For each required widget, verify its type, exact content, source asset/data, placement, order, alignment, visibility, links and relationship to other widgets/pages. Respect RR-specific variations; don't apply a default all-widget checklist or arbitrary editor order. Do not delete existing widgets to force a layout under this scope; flag conflicts requiring removal.
+For each required widget, verify its type, exact content, source asset/data, placement, order, alignment, visibility, links and relationship to other widgets/pages. Respect RR-specific variations; don't apply a default all-widget checklist or arbitrary editor order. Necessary event-exclusive widget replacement/removal follows change-policy.md. Verify ownership, dependencies and a supported operation; otherwise report a capability blocker rather than silently preserving a conflicting layout.
 
 ### Website and registration connection
+
+Follow registration-and-pricing.md for the distinction between a path and its pages, Page title versus Browser tab title, and existence versus Active/availability versus publication. Website styling is not proof that requested pages or path relationships exist. Keep page creation/configuration in the Registration Paths stage and question/answer definitions in Questions, with explicit deferred connections as above; never publish to satisfy an Active field.
 
 Check navigation and calls to action route to the correct event's intended registration path, not a previous event, live public launch, unrelated external site or placeholder. Verify supplied social links individually. Preserve query parameters with legitimate routing meaning, but never embed credentials/session tokens in content or reports.
 
@@ -59,6 +61,6 @@ Check navigation and calls to action route to the correct event's intended regis
 
 ## Boundaries and evidence
 
-No Publish/launch action, attendee access, communications sending, shared-template mutation, cloning/resetting events or arbitrary new assets under this reference. Report any additional prerequisite that would require broader permission.
+No Publish/launch action, attendee access, Emails, Code Snippets, communications sending, shared-template mutation, cloning/resetting events or arbitrary new assets under this reference. Report any additional prerequisite that would require broader permission.
 
 For each website requirement, retain its RR/reference source, observed event/page/widget identity, verified saved values and preview result. Distinguish unsupported widget types, missing assets, unclear layout instructions and out-of-scope integrations. Pass the evidence to the [verification reference](verification.md). A beautiful-looking page is not an exact RR match unless its required behavior and content also match.

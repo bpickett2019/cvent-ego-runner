@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { assertProcessGone } from './event-history.mjs';
 import { apiOperationBlocked } from './api-operation-lease.mjs';
+import { historicalHoldRetired } from './fresh-reset.mjs';
 import { evidencePresent, readSafetyEvidence, writeUncertainty } from './write-uncertainty.mjs';
 
 // Distinguish resource/accounting proof from retained write uncertainty. The strict
@@ -10,6 +11,7 @@ import { evidencePresent, readSafetyEvidence, writeUncertainty } from './write-u
 // treats that as saved-write reconciliation or clears this record's uncertainty.
 export function executionSafety(root, id, processGone = assertProcessGone) {
   const resourceBlockers = new Set(), uncertaintyBlockers = new Set();
+  let retired = false;
   const validId = typeof id === 'string' && /^[0-9a-f-]{36}$/.test(id);
   try {
     if (!validId) throw new Error('Invalid job ID');
@@ -40,13 +42,15 @@ export function executionSafety(root, id, processGone = assertProcessGone) {
     }
     if (!Array.isArray(record.unresolvedChanges)) uncertaintyBlockers.add('UNCERTAINTY_EVIDENCE_UNAVAILABLE');
     if (readSafetyEvidence(workspace, 'runtime.json').ownership !== 'USER' || readSafetyEvidence(workspace, 'receipts/steel-cleanup.json').status !== 'STOPPED') resourceBlockers.add('BROWSER_CLEANUP_UNCONFIRMED');
+    retired = historicalHoldRetired(workspace, record);
   } catch {
     resourceBlockers.add('RESOURCE_EVIDENCE_UNAVAILABLE');
     uncertaintyBlockers.add('UNCERTAINTY_EVIDENCE_UNAVAILABLE');
   }
   const resourcesCleared = resourceBlockers.size === 0, uncertaintyBlocked = uncertaintyBlockers.size > 0;
   return { version: 1, jobId: validId ? id : null, cleared: resourcesCleared && !uncertaintyBlocked,
-    resourcesCleared, uncertaintyBlocked, resourceBlockers: [...resourceBlockers], uncertaintyBlockers: [...uncertaintyBlockers] };
+    resourcesCleared, uncertaintyBlocked, historicalHoldRetired: resourcesCleared && retired,
+    resourceBlockers: [...resourceBlockers], uncertaintyBlockers: [...uncertaintyBlockers] };
 }
 
 // Backward-compatible strict gate. No automatic reconciliation or claim mutation.

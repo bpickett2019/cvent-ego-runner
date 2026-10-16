@@ -2,11 +2,13 @@
 
 ## Coverage and project sign-off
 
-Independently revisit [scope and intake](scope-and-intake.md) AND the original RR. Account for banner, billboard, the selected progress-bar option, footer color/resources/social/contact, body link/contact block, all four profile fields, asset source/destination/name, registration types/paths/admissions/Expo variants, every fee/pricing/toggle combination, discounts including group/volume, and explicit voucher/rule on/off intent. Missing essential inputs or unsupported controls for applicable work are blockers; an unresolved applicable requirement is not not-applicable. Use the applicability/baseline policy rather than creating a requirement from every checklist property.
+Independently revisit [scope and intake](scope-and-intake.md) AND the original RR. Account for banner, billboard, the selected progress-bar option, footer color/resources/social/contact, body link/contact block, all four profile fields, every requested show/registration question and its answer choices, asset source/destination/name, registration types/paths/admissions/Expo variants, every fee/pricing/toggle combination, discounts including group/volume, and explicit voucher/rule on/off intent. Missing essential inputs or unsupported controls for applicable work are blockers; an unresolved applicable requirement is not not-applicable. Use the applicability/baseline policy rather than creating a requirement from every checklist property.
 
 For applicable RR/intake/approved-baseline requirements, verify assets by identity/folder/filename AND widget use; verify field label/placement/required/display-as separately; verify fee admission/type association plus amount/active/display flags; verify discount eligibility rather than equating it with item existence. Off requires a verified disabled state when requested, not an omitted section.
 
 Recheck interpretation as well as saved state: differing name/code/display-text roles are not conflicts; a live-state mismatch alone is not ambiguous intent; comments apply only to their evidenced scope; formula-derived values and field-specific blank semantics require provenance. Confirm optional unrequested settings were preserved, not silently disabled or credited as completed RR work. Any approved baseline must identify its source/version, covered properties and saved-state verification. A blanket “keep defaults” note cannot conceal a conflicting explicit requirement or missing essential input.
+
+Apply the editorial-color policy during verification too: highlighted rows are processed normally, and color-status legends cannot create exclusions, clarification requests, blockers or completion credit. Verify that written values, instructions and comments were still respected and that meaningful number/date formats and actual branding color requirements were preserved. Do not remove a real eligibility, capability or uncertain-write blocker merely because the same row also had a color-only warning.
 
 A representative live acceptance build must include evidence for applicable categories and distinct path/type/fee/discount/rule cases, immutable RR/intake version, exact event ID, retained Draft, and operator review of the final report. Record unexercised categories/variants and missing structured intake UI separately. An agent's DONE covers only this verified event configuration, not human commercial sign-off. Skill loading, offline fixtures, deployment or HTTP success cannot prove live feature completion. Do not mark the project signed off without the user's review of actual saved results.
 
@@ -28,23 +30,24 @@ Verification is read-only unless the user has authorized the overall build and c
 
 1. Reconfirm event UUID, displayed name and unpublished status. Verify the API and browser refer to the same event when both are used.
 2. Confirm the workbook version and authoritative sheets; include applicable comments, formulas and cross-sheet references. Don't use an earlier workbook snapshot after source changes.
-3. Separate included configuration, explicit exclusions, unresolved scope questions and missing prerequisites. Out-of-scope Sessions/Speakers are not completed work. An unsupported in-scope widget/question is blocked, not excluded.
+3. Separate included configuration, explicit exclusions, unresolved scope questions and missing prerequisites. Out-of-scope Sessions/Speakers, Emails and Code Snippets remain skipped, not completed work. An unsupported in-scope widget/question is blocked, not excluded.
 4. Use fresh saved-state observations, not just prior tool output or a local intended payload. Reads may be through documented API endpoints or the supported assigned browser; respect ownership and tool limits.
 
 ## Compare values and relationships
 
 For each applicable requirement verify:
 
-- **Details:** exact supplied descriptions, dates/timezone, location, deadlines, capacity and relevant visibility.
-- **Types/admissions:** registration-types-first pass accounted for; correct code/name pairs, exact reused or narrowly authorized new contact-type identity, independently verified event assignment, intended item identity, descriptions, availability, limits, type-to-admission mappings and path exposure. Verify existing shared definitions and other events were not edited; a newly created definition alone is not a configured registration type.
+- **Details:** exact supplied event-local descriptions, dates/times/timezone, location/venue, deadlines, capacity and relevant visibility; independently verify unchanged event title/name, ID and unpublished Draft state. Shared venue definitions remain protected.
+- **Process order:** account for the required stages in operating-model.md, including skipped exclusions, answer choices immediately after their questions, and explicitly deferred connections completed only after their scheduled prerequisites. Do not infer execution order from report row order.
+- **Types/admissions:** Event-details then Registration Types stages accounted for; correct code/name pairs, exact reused or narrowly authorized new contact-type identity, independently verified event assignment, intended item identity, descriptions, availability, limits, type-to-admission mappings and path exposure. Verify existing shared definitions and other events were not edited; a newly created definition alone is not a configured registration type.
 - **Pricing:** values/currency context, effective windows, boundaries, tier ordering, and which types/items receive each price. Distinguish zero, missing and unlimited values.
 - **Discounts:** code/name/type, active/stackable settings, method and amount/percent units, dates, usage/audience rules, volume thresholds/intervals and complete eligible-item relationships. Verify existing unrelated properties were preserved.
-- **Paths/questions:** page order, exact display text and answer codes/order, individual/group response scope, requiredness, selection limits, conditional visibility and validation.
+- **Paths/questions:** page order, exact display text and answer codes/order, individual/group response scope, requiredness, selection limits, conditional visibility and validation. Account for each requested show question beyond the four profile fields; verify both its saved definition/choices and its placement on the intended page/path/type, not just catalog existence. Missing/unsupported in-scope questions remain blockers, not exclusions.
 - **Optional items/vouchers/rules:** correct values, limits, eligibility, redemption semantics and connections, not merely object existence.
 - **Website:** correct event-local theme, supplied assets, header/footer, required widget types/content/order, link destinations, registration connection and relevant responsive rendering.
 - **Preservation:** no unauthorized changes to event identity, unrelated values, shared objects, other events or protected settings.
 
-Compare in both directions: missing requested configuration, and extra/conflicting existing behavior that prevents the RR from being satisfied. Duplicate names, unintended eligible items and stale references are not an exact match. Report removal conflicts instead of silently deleting or overlooking them.
+Compare in both directions: missing requested configuration, and extra/conflicting existing behavior that prevents the RR from being satisfied. Duplicate names, unintended eligible items and stale references are not an exact match. Use change-policy.md for necessary event-exclusive removal/replacement. Require a verified supported operation; otherwise keep the capability blocker visible. Never silently delete or overlook conflicting configuration.
 
 ## Verify behavior safely
 

@@ -15,7 +15,10 @@ export function readSaveSignals({ pendingSelector, completionSelector, rejection
       throw error;
     }
   };
-  if (!document.body || document.readyState === 'loading') throw Error('SaveDocumentNotReady');
+  // Expected lifecycle state is data, not an exception that an SDK can rewrap.
+  // pending=true also keeps the host's pre-mutation gate closed while loading.
+  if (!document.body || document.readyState === 'loading') return { schemaVersion: 1, documentState: 'NOT_READY',
+    pending: true, completionVisible: false, rejectionVisible: false, validation: [] };
   const pendingNodes = matches(pendingSelector);
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node, saving = false;
@@ -24,7 +27,7 @@ export function readSaveSignals({ pendingSelector, completionSelector, rejection
   }
   const complete = matches(completionSelector), rejected = matches(rejectionSelector);
   if (complete.length > 1 || rejected.length > 1) throw Error('Ambiguous save outcome selector');
-  return { pending: saving || pendingNodes.length > 0, completionVisible: complete.length === 1, rejectionVisible: rejected.length === 1,
+  return { schemaVersion: 1, documentState: 'READY', pending: saving || pendingNodes.length > 0, completionVisible: complete.length === 1, rejectionVisible: rejected.length === 1,
     validation: matches(validationSelector).slice(0, 8).map(element => (element.innerText || element.textContent || '').trim().slice(0, 500)).filter(Boolean) };
 }
 
@@ -40,10 +43,16 @@ function validateOptions(options) {
 // Fixed categories + a fingerprint, never raw page errors, selectors, URLs or tokens.
 export function saveFailureDiagnostic(error, phase) {
   const message = String(error?.message || '').slice(0, 16384);
+  // Classify only the actual exception header. Echoed callback source and stack
+  // frames are not causes and must never authorize a retry of an unknown error.
+  const wrapped = /^JavaScript evaluation failed(?: at line \d+, column \d+)?: /.test(message);
+  const cause = message.split('; expression:')[0].replace(/^JavaScript evaluation failed(?: at line \d+, column \d+)?: /, '').split('\n')[0];
   const patterns = [
     ['EXECUTION_CONTEXT_DESTROYED', /Execution context was destroyed/],
     ['EXECUTION_CONTEXT_MISSING', /Cannot find context with specified id/],
-    ['DOCUMENT_NOT_READY', /(?:^|\n)(?:Error: )?SaveDocumentNotReady(?:\n|$)/],
+    // Compatibility with historical SDK errors only; current loading responses
+    // use the versioned result above and never depend on this text match.
+    ['DOCUMENT_NOT_READY', /^(?:Error: )?SaveDocumentNotReady$/],
     ['AMBIGUOUS_SELECTOR', /Ambiguous save outcome selector/],
     ['INVALID_SELECTOR', /not a valid selector|invalid selector|querySelectorAll.*SyntaxError/i],
     ['CONFLICTING_SIGNALS', /Conflicting save outcome signals/],
@@ -52,13 +61,18 @@ export function saveFailureDiagnostic(error, phase) {
     ['DISCONNECTED_OR_CRASHED', /disconnected|closed|crashed|target is missing/i],
     ['INVALID_OBSERVATION', /Invalid save observation/],
   ];
-  const category = patterns.find(([, pattern]) => pattern.test(message))?.[0] || 'UNCLASSIFIED_ERROR';
-  return { phase, category, errorType: ['Error', 'TypeError', 'SyntaxError', 'CdpRequestTimeoutError', 'PageEvaluationTimeoutError'].includes(error?.name) ? error.name : 'OtherError',
+  const category = patterns.find(([, pattern]) => pattern.test(cause))?.[0] || 'UNCLASSIFIED_ERROR';
+  return { phase, category, source: wrapped ? 'PAGE_EVALUATION' : 'HOST_OR_TRANSPORT', errorType: ['Error', 'TypeError', 'SyntaxError', 'CdpRequestTimeoutError', 'PageEvaluationTimeoutError'].includes(error?.name) ? error.name : 'OtherError',
     fingerprint: createHash('sha256').update(`${error?.name || 'Error'}\n${message}`).digest('hex') };
 }
 
 function assertObservation(last) {
-  if (!last || typeof last.pending !== 'boolean' || typeof last.completionVisible !== 'boolean' || typeof last.rejectionVisible !== 'boolean' || !Array.isArray(last.validation)) throw Error('Invalid save observation');
+  const keys = ['schemaVersion', 'documentState', 'pending', 'completionVisible', 'rejectionVisible', 'validation'];
+  if (!last || last.schemaVersion !== 1 || !['READY', 'NOT_READY'].includes(last.documentState)
+    || Object.keys(last).some(key => !keys.includes(key))
+    || typeof last.pending !== 'boolean' || typeof last.completionVisible !== 'boolean' || typeof last.rejectionVisible !== 'boolean'
+    || !Array.isArray(last.validation) || last.validation.length > 8 || last.validation.some(text => typeof text !== 'string' || text.length > 500)) throw Error('Invalid save observation');
+  if (last.documentState === 'NOT_READY' && (!last.pending || last.completionVisible || last.rejectionVisible || last.validation.length)) throw Error('Invalid save observation');
   if (last.completionVisible && last.rejectionVisible) throw Error('Conflicting save outcome signals');
 }
 
@@ -67,22 +81,28 @@ async function uncertain(onUncertain, evidence, cause) {
   try { await onUncertain({ reason: 'Save outcome unknown; no replay or further writes', ...evidence }); }
   catch { retained = false; }
   const diagnostic = saveFailureDiagnostic(cause, evidence.phase);
-  const error = new Error(`Save outcome unknown; stop without replay (${diagnostic.phase}/${diagnostic.category}). ${retained ? 'Preserve evidence and independently reconcile.' : 'Evidence persistence also failed; do not continue.'}`);
+  const error = new Error(`Save outcome unknown; stop without replay (${diagnostic.phase}/${diagnostic.category}). `
+    + `Observation attempts=${evidence.attempts ?? 0}, document-not-ready polls=${evidence.documentNotReadyPolls ?? 0}, transient read failures=${evidence.transientReadFailures ?? 0}. `
+    + `${retained ? 'Preserve evidence and independently reconcile.' : 'Evidence persistence also failed; do not continue.'}`);
   error.name = 'BrowserSaveUncertainError'; error.diagnostic = diagnostic;
   throw error;
 }
 
 export async function observeSave(page, options, { checkControl, onUncertain, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = Date.now } = {}) {
   if (!checkControl || !onUncertain) throw Error('Save observer requires bound safety hooks');
-  const started = now(); let last = null, polls = 0, attempts = 0, transientReadFailures = 0, lastTransientFailure = null, phase = 'VALIDATE_OPTIONS';
+  const started = now(); let last = null, lastObservationElapsedMs = null, polls = 0, attempts = 0,
+    documentNotReadyPolls = 0, pendingPolls = 0, noOutcomePolls = 0,
+    transientReadFailures = 0, lastTransientFailure = null, phase = 'VALIDATE_OPTIONS';
+  const diagnostics = () => ({ polls, attempts, documentNotReadyPolls, pendingPolls, noOutcomePolls,
+    transientReadFailures, lastTransientFailure, elapsedMs: now() - started, lastObservationElapsedMs });
   try {
     const timeoutMs = validateOptions(options);
     while (true) {
       phase = 'CONTROL_BEFORE_READ'; await checkControl();
       if (attempts && now() - started >= timeoutMs) { phase = 'DEADLINE'; throw Error('Save outcome remained unknown within bounded observation'); }
       phase = 'OBSERVE_DOM'; attempts++;
-      let transient = false;
-      try { last = await page.evaluate(readSaveSignals, options); polls++; }
+      let transient = false, observation;
+      try { observation = await page.evaluate(readSaveSignals, options); polls++; }
       catch (error) {
         const diagnostic = saveFailureDiagnostic(error, phase);
         // Only retry this fixed read-only function, never an input or a control check.
@@ -94,15 +114,22 @@ export async function observeSave(page, options, { checkControl, onUncertain, sl
       if (now() - started > timeoutMs) { phase = 'DEADLINE'; throw Error('Save outcome remained unknown within bounded observation'); }
       phase = 'VALIDATE_OBSERVATION';
       if (!transient) {
-        assertObservation(last);
-        if (!last.pending && (last.completionVisible || last.rejectionVisible)) return { status: last.rejectionVisible ? 'REJECTION_VISIBLE_NOT_VERIFIED' : 'COMPLETION_VISIBLE_NOT_VERIFIED', verified: false, ...last, polls, attempts, transientReadFailures, lastTransientFailure, elapsedMs: now() - started };
+        assertObservation(observation);
+        // Only validated protocol data can enter the receipt. A malformed SDK
+        // return must not persist arbitrary fields or replace the last good read.
+        last = observation; lastObservationElapsedMs = now() - started;
+        if (last.documentState === 'NOT_READY') documentNotReadyPolls++;
+        else if (last.pending) pendingPolls++;
+        else if (!last.completionVisible && !last.rejectionVisible) noOutcomePolls++;
+        if (last.documentState === 'READY' && !last.pending && (last.completionVisible || last.rejectionVisible)) return {
+          status: last.rejectionVisible ? 'REJECTION_VISIBLE_NOT_VERIFIED' : 'COMPLETION_VISIBLE_NOT_VERIFIED', verified: false, ...last, ...diagnostics() };
       }
       phase = 'DEADLINE';
       if (now() - started >= timeoutMs) throw Error('Save outcome remained unknown within bounded observation');
       await sleep(Math.min(1000, timeoutMs - (now() - started)));
     }
   } catch (error) {
-    return uncertain(onUncertain, { schemaVersion: 2, phase, failure: saveFailureDiagnostic(error, phase), polls, attempts, transientReadFailures, lastTransientFailure, elapsedMs: now() - started, lastObservation: last }, error);
+    return uncertain(onUncertain, { schemaVersion: 2, phase, failure: saveFailureDiagnostic(error, phase), ...diagnostics(), lastObservation: last }, error);
   }
 }
 

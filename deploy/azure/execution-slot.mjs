@@ -23,7 +23,7 @@ export class ExecutionSlotError extends Error {
       NOT_SLOT_OWNER: 'This job does not own the shared execution slot. No continuation was sent.',
       CLEARANCE_UNAVAILABLE: `${label}: cleanup verification is unavailable. No claim was cleared; retry only after its backend is available.`,
       EXECUTION_SLOT_HELD: `${label} still holds execution capacity. Stop that run and verify process, browser and spending cleanup; Clear/New RR elsewhere cannot release it.`,
-      EVENT_RECONCILIATION_REQUIRED: `${label} has retained write or interrupted-operation uncertainty. Resource/spending checks pass, but read-only saved-result reconciliation is required. Clear/New RR does not erase this hold; no new build was started.`,
+      EVENT_RECONCILIATION_REQUIRED: `${label} has retained write or interrupted-operation uncertainty. Resource/spending checks pass. Reconcile the saved result, or use Clear/New RR to retire settled historical holds and start with a fresh RR context. Saved Cvent changes are not undone; no new build was started.`,
     };
     super(messages[code] || messages.SLOT_STATE_INVALID);
     this.publicResult = { code: messages[code] ? code : 'SLOT_STATE_INVALID', error: this.message,
@@ -39,7 +39,8 @@ function clearanceProof(value, owner) {
       typeof value.resourcesCleared !== 'boolean' || typeof value.uncertaintyBlocked !== 'boolean' ||
       !Array.isArray(value.resourceBlockers) || !Array.isArray(value.uncertaintyBlockers) ||
       value.resourcesCleared !== (value.resourceBlockers.length === 0) || value.uncertaintyBlocked !== (value.uncertaintyBlockers.length > 0) ||
-      value.cleared !== (value.resourcesCleared && !value.uncertaintyBlocked)) return null;
+      value.cleared !== (value.resourcesCleared && !value.uncertaintyBlocked) ||
+      value.historicalHoldRetired !== undefined && (typeof value.historicalHoldRetired !== 'boolean' || value.historicalHoldRetired && !value.resourcesCleared)) return null;
   return value;
 }
 
@@ -113,10 +114,10 @@ export function createExecutionSlot({ directory, clearance, prepareHandoff, now 
             shared = handoffProof(encoded, workspace, held.jobId, 'answer', now);
             proof = await cleanup();
             handoffProof(encoded, workspace, held.jobId, 'answer', now);
-            if (proof.uncertaintyBlocked && !shared.inventories[workspace - 1].holds.some(hold => hold.jobId === held.jobId)) throw new ExecutionSlotError('SHARED_EVENT_SAFETY_UNAVAILABLE');
+            if (proof.uncertaintyBlocked && proof.historicalHoldRetired !== true && !shared.inventories[workspace - 1].holds.some(hold => hold.jobId === held.jobId)) throw new ExecutionSlotError('SHARED_EVENT_SAFETY_UNAVAILABLE');
           }
-          // No target grant is forwarded. Unknown/event-scoped holds remain in
-          // inventory and still deny future execution; only idle capacity ends.
+          // No target grant is forwarded. Holds without an explicit committed
+          // fresh-reset acknowledgement still deny future execution.
           if (JSON.stringify(read()) !== JSON.stringify(held)) throw new ExecutionSlotError('SLOT_STATE_INVALID');
           archiveClaim(held);
           return { sharedSlotReleased: true, sharedSlotStatus: 'RELEASED' };
@@ -133,7 +134,7 @@ export function createExecutionSlot({ directory, clearance, prepareHandoff, now 
         const proof = held ? clearanceProof(await clearance(held), held) : { resourcesCleared: true, uncertaintyBlocked: false };
         return { holder: held ? { workspace: held.workspace, jobId: held.jobId } : null,
           resourcesCleared: proof?.resourcesCleared ?? (proof?.cleared === true ? true : null),
-          uncertaintyBlocked: proof?.uncertaintyBlocked ?? (proof?.cleared === true ? false : null),
+          uncertaintyBlocked: proof?.historicalHoldRetired === true ? false : proof?.uncertaintyBlocked ?? (proof?.cleared === true ? false : null),
           current: () => { try { return JSON.stringify(read()) === revision; } catch { return false; } } };
       } catch { return { holder: null, resourcesCleared: null, uncertaintyBlocked: null, current: () => false }; }
     },
@@ -174,7 +175,7 @@ export function createExecutionSlot({ directory, clearance, prepareHandoff, now 
       }
       if (held && !sameHolder && prepareHandoff) cleanup = await cleanupProof(); // Recheck after asynchronous inventory reads.
       if (encoded) handoffProof(encoded, workspace, jobId, operation, now); // No expired grant at commit.
-      if (cleanup?.uncertaintyBlocked && shared && !shared.inventories[held.workspace - 1].holds.some(hold => hold.jobId === held.jobId)) {
+      if (cleanup?.uncertaintyBlocked && cleanup.historicalHoldRetired !== true && shared && !shared.inventories[held.workspace - 1].holds.some(hold => hold.jobId === held.jobId)) {
         throw new ExecutionSlotError('SHARED_EVENT_SAFETY_UNAVAILABLE'); // A retained owner hold must not disappear between proofs.
       }
       assertNotReset(); // A queued/slow handoff cannot survive a workspace reset.

@@ -1,10 +1,11 @@
-// Authenticated, expiring staging gateway. Caddy MUST authenticate every route
-// and overwrite X-Cvent-Staging-User. Only loopback SSH forwards are upstreams.
+// Expiring staging gateway. Legacy mode trusts Caddy Basic identity; form-login
+// mode requires gateway sessions and ignores supplied identity headers. Loopback only.
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { createExecutionSlot, slotErrorResponse } from './execution-slot.mjs';
 import { boundedJson, collectEventInventories, collectEventSafety, readExecutionStatus } from './event-safety.mjs';
 import { createWorkspaceSlots } from './workspace-slots.mjs';
+import { createLogin } from './login.mjs';
 
 // One canonical reset request, no retries. Buffer only the bounded JSON receipt
 // so capacity release is acknowledged after backend cleanup, not before it.
@@ -29,22 +30,38 @@ export function routeWorkspace(raw) {
   const match = /^\/workspaces\/([123])\/(.*)$/.exec(raw);
   return match ? { id: Number(match[1]), path: '/' + match[2] } : null;
 }
-export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783], now = Date.now, executionSlotDirectory, concurrentWorkspaces = 1 }) {
+// External links and their redirects are cross-site even after Basic authentication.
+// Permit only safe top-level dashboard documents, never APIs, assets, frames or viewers.
+function dashboardNavigation(req) {
+  if (!['GET', 'HEAD'].includes(req.method) || req.headers['sec-fetch-mode'] !== 'navigate' || req.headers['sec-fetch-dest'] !== 'document') return false;
+  if (/^\/(?:index\.html)?(?:\?[^\\\x00-\x20]*)?$/.test(req.url) || /^\/workspaces\/[123]$/.test(req.url)) return true;
+  const route = routeWorkspace(req.url);
+  return !!route && /^\/(?:index\.html)?(?:\?[^\\\x00-\x20]*)?$/.test(route.path);
+}
+export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783], now = Date.now, executionSlotDirectory, concurrentWorkspaces = 1, login: loginOptions = null }) {
   if (![1, 3].includes(concurrentWorkspaces) || concurrentWorkspaces === 3 && !executionSlotDirectory) throw new Error('Invalid concurrent workspace configuration');
   const concurrent = concurrentWorkspaces === 3;
   const url = new URL(origin), expiry = Date.parse(expiresAt);
   if (url.protocol !== 'https:' || url.origin !== origin || !Number.isFinite(expiry) || ports.length !== 3 || new Set(ports).size !== 3 || ports.some(p => !Number.isInteger(p) || p < 1024 || p > 65535)) throw new Error('Invalid gateway configuration');
-  function authorized(req) {
+  const login = loginOptions ? createLogin({ ...loginOptions, origin, expiresAt, now }) : null;
+  function trusted(req) {
+    const loginNavigation = login && req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document' && /^\/login(?:\?[^\\\x00-\x20]*)?$/.test(req.url);
     return ['127.0.0.1', '::ffff:127.0.0.1', '::1'].includes(req.socket.remoteAddress)
-      && req.headers.host === url.host && typeof req.headers['x-cvent-staging-user'] === 'string'
-      && /^[^\r\n]{1,200}$/.test(req.headers['x-cvent-staging-user'])
+      && req.headers.host === url.host
       && (!req.headers.origin || req.headers.origin === origin)
-      && req.headers['sec-fetch-site'] !== 'cross-site';
+      && (req.headers['sec-fetch-site'] !== 'cross-site' || dashboardNavigation(req) || loginNavigation)
+      && (!login || ['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.headers.origin === origin);
+  }
+  function authorized(req) {
+    return trusted(req) && (login ? Boolean(login.get(req)) : typeof req.headers['x-cvent-staging-user'] === 'string' && /^[^\r\n]{1,200}$/.test(req.headers['x-cvent-staging-user']));
   }
   function headers(req) {
     const result = { ...req.headers, host: '127.0.0.1:8788' };
     for (const key of Object.keys(result)) if (/^(?:authorization|proxy-authorization|cookie|forwarded|x-forwarded-.*|x-cvent-.*)$/i.test(key)) delete result[key];
     if (result.origin) result.origin = 'http://127.0.0.1:8788';
+    // The backend checks this metadata too. Normalize only the already-authorized
+    // dashboard document on our trusted loopback hop, never an API or mutation.
+    if (result['sec-fetch-site'] === 'cross-site' && dashboardNavigation(req)) result['sec-fetch-site'] = 'same-origin';
     return result;
   }
   const clearance = async ({ workspace, jobId }) => {
@@ -67,7 +84,14 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
   });
   const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    if (!authorized(req)) { res.writeHead(403); return res.end('Authenticated staging access required'); }
+    if (!trusted(req)) { res.writeHead(403); return res.end('Trusted staging origin required'); }
+    if (login && now() >= expiry) { res.writeHead(503); return res.end('Restricted staging access expired; operator renewal required'); }
+    if (login && await login.handle(req, res)) return;
+    if (!authorized(req)) {
+      if (login) return login.deny(req, res);
+      res.writeHead(403); return res.end('Authenticated staging access required');
+    }
+    login?.track(req, res);
     if (now() >= expiry) { res.writeHead(503); return res.end('Restricted staging access expired; operator renewal required'); }
     // The UI resolves module imports, API calls and storage from this prefix.
     // Never serve a second root alias with an independently maintained asset list.
@@ -85,7 +109,7 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
     } catch { res.writeHead(404); return res.end('Unknown workspace route'); }
     if (route.path === '/local-workspaces.json' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
-      return res.end(JSON.stringify({ version: 1, mode: 'staging', current: route.id,
+      return res.end(JSON.stringify({ version: 1, mode: 'staging', current: route.id, sessionLogin: Boolean(login),
         workspaces: [1, 2, 3].map(id => ({ id, url: `${origin}/workspaces/${id}/` })) }));
     }
     if (slot && req.method === 'GET' && route.path === '/api/execution-status') {
@@ -124,14 +148,14 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
       }
       // A fully consumed IncomingMessage may be destroyed normally. Check the
       // caller/response, not body-stream destruction, before paid forwarding.
-      const cancelled = () => req.aborted || res.destroyed;
+      const cancelled = () => req.aborted || res.destroyed || Boolean(login && !login.get(req));
       const admission = await slot?.authorize(route.id, route.path, req.method, { body, cancelled });
       const eventSafety = concurrent ? admission?.header : admission;
       if (concurrent && admission) { finishHandoff = admission.finish; res.once('finish', finishHandoff); res.once('close', finishHandoff); }
       if (eventSafety) upstreamHeaders['x-cvent-event-safety'] = eventSafety;
     }
     catch (error) { finishHandoff(); if (!res.destroyed) { res.writeHead(409, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(slotErrorResponse(error))); } return; }
-    if (req.aborted || res.destroyed) { finishHandoff(); return; } // Never forward an abandoned delayed handoff.
+    if (req.aborted || res.destroyed || (login && !login.get(req))) { finishHandoff(); res.destroy(); return; } // Never forward an abandoned delayed handoff.
     if (now() >= expiry) { finishHandoff(); res.writeHead(503); return res.end('Restricted staging access expired'); }
     if (bufferedBody) { delete upstreamHeaders['transfer-encoding']; upstreamHeaders['content-length'] = String(bufferedBody.length); }
     const upstream = http.request({ host: '127.0.0.1', port: ports[route.id - 1], method: req.method, path: route.path, headers: upstreamHeaders }, response => {
@@ -152,8 +176,10 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
     if (!authorized(req) || req.headers.origin !== origin || now() >= expiry || !route || !/^\/steel-cast(?:[/?]|$)/.test(route.path)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
+    login?.track(req, socket);
     const upstream = http.request({ host: '127.0.0.1', port: ports[route.id - 1], method: 'GET', path: route.path, headers: headers(req) });
     upstream.on('upgrade', (response, remote, remoteHead) => {
+      if (socket.destroyed || (login && !login.get(req))) { remote.destroy(); socket.destroy(); return; }
       remote.on('error', () => socket.destroy()); socket.on('error', () => remote.destroy());
       const lines = Object.entries(response.headers).filter(([key]) => key !== 'set-cookie').map(([key, value]) => `${key}: ${value}`);
       socket.write(`HTTP/1.1 101 Switching Protocols\r\n${lines.join('\r\n')}\r\n\r\n`);
@@ -165,12 +191,14 @@ export function createGateway({ origin, expiresAt, ports = [18781, 18782, 18783]
     upstream.on('response', response => { response.resume(); socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'); });
     upstream.on('error', () => socket.destroy()); socket.on('close', () => upstream.destroy()); upstream.end();
   });
+  server.on('close', () => login?.close());
   return server;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Production startup requires an explicitly configured durable slot directory.
   if (!process.env.CVENT_EXECUTION_SLOT_DIR) throw new Error('Durable execution slot directory required');
-  const server = createGateway({ origin: process.env.CVENT_PUBLIC_ORIGIN, expiresAt: process.env.CVENT_STAGING_EXPIRES, executionSlotDirectory: process.env.CVENT_EXECUTION_SLOT_DIR, concurrentWorkspaces: process.env.CVENT_CONCURRENT_WORKSPACES === undefined ? 1 : Number(process.env.CVENT_CONCURRENT_WORKSPACES) });
+  if (process.env.CVENT_LOGIN_ENABLED && !['true', 'false'].includes(process.env.CVENT_LOGIN_ENABLED)) throw new Error('Invalid login mode');
+  const server = createGateway({ origin: process.env.CVENT_PUBLIC_ORIGIN, expiresAt: process.env.CVENT_STAGING_EXPIRES, executionSlotDirectory: process.env.CVENT_EXECUTION_SLOT_DIR, concurrentWorkspaces: process.env.CVENT_CONCURRENT_WORKSPACES === undefined ? 1 : Number(process.env.CVENT_CONCURRENT_WORKSPACES), login: process.env.CVENT_LOGIN_ENABLED === 'true' ? {} : null });
   server.listen(8890, '127.0.0.1');
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { server.close(); server.closeAllConnections(); setTimeout(() => process.exit(0), 1000).unref(); });
 }

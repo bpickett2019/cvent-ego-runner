@@ -11,6 +11,7 @@ import { BrowserFailureGuard, hasBrowserSaveUncertainty } from "./browser-failur
 import { stopJobBrowser } from "./clean-browser.mjs";
 import { budgetTotals } from "./budget.mjs";
 import { executionSafety } from "./execution-clearance.mjs";
+import { prepareFreshReset } from "./fresh-reset.mjs";
 import { apiOperationBlocked, API_LOCK_PROTOCOL } from "./api-operation-lease.mjs";
 
 const read = path => JSON.parse(readFileSync(path, "utf8"));
@@ -117,13 +118,14 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     const value = existsSync(contextPath) ? read(contextPath) : { id: null, workbookId: null, jobId: null };
     const valid = id => id === null || (typeof id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id));
     if (!valid(value?.id) || !valid(value?.workbookId) || !valid(value?.jobId)) throw new Error("RR context requires reconciliation; no reset was confirmed");
-    return { id: value.id, workbookId: value.workbookId, jobId: value.jobId };
+    return { id: value.id, workbookId: value.workbookId, jobId: value.jobId, ...(value.freshResetId !== undefined ? { freshResetId: value.freshResetId } : {}) };
   };
   const assertContext = id => {
     if ((id ?? null) !== context().id) throw new Error("RR context changed; refresh before starting or clearing a run");
   };
   const resetContext = (workbookId = null) => {
-    const value = { id: randomUUID(), workbookId, jobId: null };
+    const receipt = prepareFreshReset(root, executionSafety);
+    const value = { id: randomUUID(), workbookId, jobId: null, freshResetId: receipt.id };
     save(contextPath, value);
     return value;
   };
@@ -131,9 +133,9 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
     if (records().some(j => ["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(j.status))) throw new Error("Unsettled durable job exists; reconcile owned resources and spending first");
   };
   const assertResettable = prior => {
-    // A context reset is not permission to execute or reconcile a saved write.
-    // Settled resource proof allows a fresh UI/Pi context while the immutable
-    // historical hold remains enforced at local/shared event handoff gates.
+    // A reset never starts execution or claims saved-write reconciliation.
+    // After resource settlement, resetContext explicitly retires historical
+    // event holds for future runs while preserving all original evidence.
     const directories = [join(root, "data/current"), ...(prior ? [pathFor(prior.id)] : [])];
     for (const directory of directories) {
       const hold = apiOperationBlocked(directory) ? "API operation ownership" : existsSync(join(directory, "operation.lock")) ? "operation.lock" : null;
@@ -345,7 +347,7 @@ export function mountRR(app, { root, verifyLogin, prepareTarget, provisionBrowse
       // File replacement commits only after a valid workbook preview is saved.
       const rrContext = request.prepareUpload ? context() : resetContext();
       res.json({ cleared: true, clearScope: request.prepareUpload ? 'PREPARED_UPLOAD' : 'CURRENT_RR_CONTEXT', executionHoldsCleared: false, sharedSlotReleased: false,
-        rrContext, resetScope: 'WORKSPACE', stoppedJobId: prior?.id ?? null, aiStarted: false, historyPreserved: true, spendingPreserved: true });
+        rrContext, historicalHoldsRetired: !request.prepareUpload, resetScope: 'WORKSPACE', stoppedJobId: prior?.id ?? null, aiStarted: false, historyPreserved: true, spendingPreserved: true });
     } finally { resetting = false; }
   }));
   app.post("/api/jobs", upload.single("rr"), route(async (req, res) => {

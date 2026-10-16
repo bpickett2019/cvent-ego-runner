@@ -144,6 +144,17 @@ export function verifyEventUpdate(before, after, changes) {
 // configureDiscount always POSTs first, so do not reuse that create/update workflow.
 const DISCOUNT_FIELDS = ["name", "active", "stackable", "method", "effectiveFrom", "effectiveTo", "note", "code", "audienceType", "includeGuestsTowardsCapacity", "autoApply", "applyToAllAgendaItems", "type", "capacity"];
 const DISCOUNT_PATCH_FIELDS = DISCOUNT_FIELDS.filter(key => !["type", "code", "applyToAllAgendaItems"].includes(key));
+const DISCOUNT_DATE_FIELDS = ["effectiveFrom", "effectiveTo"];
+const dateClearFields = patch => DISCOUNT_DATE_FIELDS.filter(key => Object.hasOwn(patch, key) && patch[key] === null);
+// The documented discount PUT resets omitted fields to defaults. Null is our
+// explicit clear intent, not a wire value; preserve every other writable field.
+function discountDates(row) {
+  const normalized = { ...row };
+  for (const key of DISCOUNT_DATE_FIELDS) if (normalized[key] === null) delete normalized[key];
+  return normalized;
+}
+const discountBusiness = row => business(discountDates(row));
+const datesCleared = (row, patch) => dateClearFields(patch).every(key => !Object.hasOwn(row, key) || row[key] === null);
 const discountKey = code => code.trim().toUpperCase();
 const object = value => !!value && typeof value === "object" && !Array.isArray(value);
 function keys(value, allowed) { if (!object(value) || !Object.keys(value).length || Object.keys(value).some(key => !allowed.includes(key))) throw new ApiFailure("Unsupported/prohibited fields or empty patch"); }
@@ -192,26 +203,25 @@ function validateDiscountBody(body) {
   if (!object(body.method) || Object.keys(body.method).some(key => !["type", "value"].includes(key)) || !["BY_AMOUNT", "BY_PERCENTAGE", "FLAT_PRICE"].includes(body.method.type) || !Number.isFinite(body.method.value) || body.method.value < 0 || (body.method.type === "BY_PERCENTAGE" && body.method.value > 100)) throw new ApiFailure("Invalid discount method/value");
   if (!object(body.capacity) || Object.keys(body.capacity).some(key => key !== "total") || !Number.isInteger(body.capacity.total) || body.capacity.total < -1 || body.capacity.total > 32767) throw new ApiFailure("Discount capacity must contain only a supported total");
   if (Object.hasOwn(body, "note") && (typeof body.note !== "string" || body.note.length > 300)) throw new ApiFailure("Invalid discount note");
-  for (const key of ["effectiveFrom", "effectiveTo"]) if (Object.hasOwn(body, key) && (typeof body[key] !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body[key]) || !Number.isFinite(Date.parse(body[key])) || new Date(body[key]).toISOString().slice(0, 10) !== body[key])) throw new ApiFailure("Discount effective dates must be valid ISO dates; clearing dates is not supported");
+  for (const key of ["effectiveFrom", "effectiveTo"]) if (Object.hasOwn(body, key) && (typeof body[key] !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body[key]) || !Number.isFinite(Date.parse(body[key])) || new Date(body[key]).toISOString().slice(0, 10) !== body[key])) throw new ApiFailure("Discount effective dates must be valid ISO dates; use explicit null in the patch to clear a restriction");
   if (body.effectiveFrom && body.effectiveTo && body.effectiveFrom > body.effectiveTo) throw new ApiFailure("Discount effective dates are reversed");
 }
 function prepareDiscount(input, before) {
   if (before && Object.keys(before).some(key => ![...DISCOUNT_FIELDS, "id", "level", "event", "created", "createdBy", ...AUDIT_FIELDS].includes(key))) throw new ApiFailure("Discount baseline contains an unreviewed field; refusing a lossy PUT");
   if (before && (!object(before.capacity) || Object.keys(before.capacity).some(key => !["total", "used"].includes(key)) || !Number.isInteger(before.capacity.used) || before.capacity.used < 0)) throw new ApiFailure("Discount baseline capacity cannot be preserved");
   const patch = input.patch;
-  const body = before ? Object.fromEntries(DISCOUNT_FIELDS.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) : { type: "DISCOUNT_CODE", code: input.code, applyToAllAgendaItems: false };
-  if (before) body.capacity = { total: before.capacity.total };
-  Object.assign(body, structuredClone(patch));
+  const original = before ? Object.fromEntries(DISCOUNT_FIELDS.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) : { type: "DISCOUNT_CODE", code: input.code, applyToAllAgendaItems: false };
+  if (before) original.capacity = { total: before.capacity.total };
+  const body = discountDates({ ...original, ...structuredClone(patch) });
   validateDiscountBody(body);
   if (before && body.capacity.total !== -1 && body.capacity.total < before.capacity.used) throw new ApiFailure("Discount capacity is below its existing usage");
-  const expected = before ? { ...structuredClone(before), ...structuredClone(patch), capacity: { ...before.capacity, ...body.capacity } } : body;
-  return { body, expected };
+  return { body };
 }
 const VOLUME_FIELDS = ["name", "type", "active", "stackable", "method", "effectiveFrom", "effectiveTo", "note", "thresholdType", "thresholdLimit", "interval", "includePrimaryRegistrant"];
 const VOLUME_PATCH_FIELDS = VOLUME_FIELDS.filter(key => !["name", "type"].includes(key));
 function prepareVolumeDiscount(input, before) {
   if (before && Object.keys(before).some(key => ![...VOLUME_FIELDS, "id", "level", "event", "created", "createdBy", ...AUDIT_FIELDS].includes(key))) throw new ApiFailure("Volume discount baseline contains an unreviewed field; no lossy initial configuration");
-  const body = { ...(before ? Object.fromEntries(VOLUME_FIELDS.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) : { name: input.name, type: "VOLUME_DISCOUNT" }), ...structuredClone(input.patch) };
+  const body = discountDates({ ...(before ? Object.fromEntries(VOLUME_FIELDS.filter(key => Object.hasOwn(before, key)).map(key => [key, structuredClone(before[key])])) : { name: input.name, type: "VOLUME_DISCOUNT" }), ...structuredClone(input.patch) });
   if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 50 || body.type !== "VOLUME_DISCOUNT") throw new ApiFailure("Volume discount name/type required");
   if (["active", "stackable", "includePrimaryRegistrant"].some(key => typeof body[key] !== "boolean")) throw new ApiFailure("Volume discount flags must be explicit booleans");
   if (!object(body.method) || Object.keys(body.method).some(key => !["type", "value"].includes(key)) || !["BY_AMOUNT", "BY_PERCENTAGE", "FLAT_PRICE"].includes(body.method.type) || !Number.isFinite(body.method.value) || body.method.value < 0 || (body.method.type === "BY_PERCENTAGE" && body.method.value > 100)) throw new ApiFailure("Invalid volume discount method/value");
@@ -392,9 +402,13 @@ export class CventConnection {
     const identity = input?.[identityKey], fields = volume ? VOLUME_PATCH_FIELDS : DISCOUNT_PATCH_FIELDS;
     const match = rows => discountMatch(rows, identity, kind);
     const prepare = volume ? prepareVolumeDiscount : prepareDiscount;
-    if (!object(input) || Object.keys(input).some(key => ![identityKey, "discountId", "patch", "createIfMissing", "agendaItems"].includes(key)) || typeof identity !== "string" || !identity.trim() || identity !== identity.trim() || identity.length > (volume ? 50 : 30) || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !fields.includes(key))) throw new ApiFailure("Discount input requires an exact identity and supported patch");
+    if (!object(input) || Object.keys(input).some(key => ![identityKey, "discountId", "patch", "createIfMissing", "agendaItems", "removeAgendaItems"].includes(key)) || typeof identity !== "string" || !identity.trim() || identity !== identity.trim() || identity.length > (volume ? 50 : 30) || (input.discountId !== undefined && !UUID.test(input.discountId)) || (input.createIfMissing !== undefined && typeof input.createIfMissing !== "boolean") || !object(input.patch) || !Object.keys(input.patch).length || Object.keys(input.patch).some(key => !fields.includes(key))) throw new ApiFailure("Discount input requires an exact identity and supported patch");
     if (Object.hasOwn(input.patch, "note")) text(input.patch.note, 300);
     if (input.agendaItems !== undefined && (!Array.isArray(input.agendaItems) || !input.agendaItems.length || input.agendaItems.length > 100 || input.agendaItems.some(item => !object(item) || Object.keys(item).some(key => !["id", "type"].includes(key)) || !UUID.test(item.id) || !["AdmissionItem", "QuantityItem"].includes(item.type)) || new Set(input.agendaItems.map(item => item.id)).size !== input.agendaItems.length)) throw new ApiFailure("agendaItems requires 1–100 unique, explicit AdmissionItem/QuantityItem UUIDs; sessions and other item types are outside scope");
+    if (input.removeAgendaItems !== undefined) {
+      const removed = input.removeAgendaItems;
+      if (!input.discountId || input.createIfMissing === true || !input.agendaItems || !Array.isArray(removed) || !removed.length || removed.length > 100 || removed.some(item => !object(item) || Object.keys(item).some(key => !["id", "type"].includes(key)) || !UUID.test(item.id) || !["AdmissionItem", "QuantityItem"].includes(item.type)) || new Set(removed.map(item => item.id)).size !== removed.length || removed.some(item => input.agendaItems.some(wanted => wanted.id === item.id))) throw new ApiFailure("removeAgendaItems requires an existing discountId, explicit disjoint AdmissionItem/QuantityItem removals and a nonempty desired agendaItems set; creation and whole-discount deletion are not supported");
+    }
     const rows = await this.readCollection(target.apiEventId, "listDiscounts");
     const before = match(rows);
     if (input.discountId && before?.id !== input.discountId) throw new ApiFailure("Discount ID/code does not match this event's catalog");
@@ -419,7 +433,7 @@ export class CventConnection {
     if (!isDeepStrictEqual(before, latest)) throw new ApiFailure("Discount changed during preparation; no write attempted");
     const method = "POST";
     const path = `/events/${target.apiEventId}/discounts`;
-    await beforeWrite({ method, path, baseline: before, body });
+    await beforeWrite({ method, path, baseline: before, body, dateClearFields: dateClearFields(input.patch) });
     // Exactly one mutation. Never replay on HTTP failure, stale search or timeout.
     const response = await this.transport(credentials.baseUrl + path, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
     let payload;
@@ -436,7 +450,7 @@ export class CventConnection {
       if (found.length > 1) throw new ApiFailure("Discount readback has duplicate identities; reconciliation required");
       let saved = found[0];
       if (saved && (saved.level !== "EVENT" || saved.type !== kind || typeof saved[identityKey] !== "string" || (volume ? saved.name !== identity : discountKey(saved.code) !== discountKey(identity)))) throw new ApiFailure("Discount readback escaped the approved code/level; reconciliation required");
-      const matches = row => !!row && includesRequested(row, body);
+      const matches = row => !!row && includesRequested(row, body) && datesCleared(row, input.patch);
       let matched = matches(saved);
       if (matched) {
         // Full scoped scan also catches duplicate codes after creation/update.
@@ -460,6 +474,7 @@ export class CventConnection {
     await recheck();
     const response = await this.transport(credentials.baseUrl + prepared.path, { method: prepared.method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(prepared.body ? { body: JSON.stringify(prepared.body) } : {}) });
     await recordEvidence({ phase: "ACKNOWLEDGED_NOT_VERIFIED", status: response.status, path: prepared.path, requestId: response.headers.get("x-request-id") || response.headers.get("x-cvent-request-id") });
+    if (prepared.expectedStatus !== undefined && response.status !== prepared.expectedStatus) throw new ApiFailure("Unexpected removal acknowledgment; retain uncertainty, never replay");
     if (response.status === 204) return null;
     let payload;
     try { payload = await response.json(); } catch {
@@ -494,32 +509,52 @@ export class CventConnection {
     const match = rows => discountMatch(rows, volume ? input.name : input.code, kind);
     let links = await this.discountLinks(id, before.id);
     const desiredLinks = input.agendaItems ? this.itemKeys(input.agendaItems) : links;
-    if (links.some(key => !desiredLinks.includes(key))) throw new ApiFailure("Removing/replacing existing discount links is prohibited");
-    const catalog = input.agendaItems ? await this.discountItemsSnapshot(id, input.agendaItems) : null;
+    const removedLinks = links.filter(key => !desiredLinks.includes(key));
+    const requestedRemovals = this.itemKeys(input.removeAgendaItems ?? []);
+    if (removedLinks.length && !isDeepStrictEqual(removedLinks, requestedRemovals)) throw new ApiFailure("Removing/replacing existing discount links requires an exact explicit removeAgendaItems list");
+    if (input.removeAgendaItems && (typeof before.active !== "boolean" || (!volume && before.applyToAllAgendaItems !== true) || (!removedLinks.length && !isDeepStrictEqual(links, desiredLinks)))) throw new ApiFailure("Removal baseline differs from the requested item-scoped replacement; no write attempted");
+    if (removedLinks.length && before.active && !links.some(key => desiredLinks.includes(key))) throw new ApiFailure("Full retargeting of an active discount requires a separately verified deactivation first; no temporary empty active item set is allowed");
+    const checkedItems = input.agendaItems ? [...input.agendaItems, ...(input.removeAgendaItems ?? [])] : null;
+    const catalog = checkedItems ? await this.discountItemsSnapshot(id, checkedItems) : null;
     if (input.agendaItems && !volume) body = { ...body, applyToAllAgendaItems: true };
     const expected = { ...before, ...body, ...(!volume ? { capacity: { ...before.capacity, ...body.capacity } } : {}) };
-    if (isDeepStrictEqual(business(before), business(expected)) && isDeepStrictEqual(links, desiredLinks)) return { route: "api", action: "unchanged", verified: true, requirementsSatisfied: true, differences: [], eventId: id, discountId: before.id, saved: before };
+    const clearedDates = dateClearFields(input.patch);
+    for (const key of clearedDates) delete expected[key];
+    if (isDeepStrictEqual(discountBusiness(before), discountBusiness(expected)) && isDeepStrictEqual(links, desiredLinks)) return { route: "api", action: "unchanged", verified: true, requirementsSatisfied: true, differences: [], eventId: id, discountId: before.id, saved: before };
     const assertBaseline = async () => {
-      if (!isDeepStrictEqual(event, (await this.assertTarget(target)).event) || !isDeepStrictEqual(business(before), business(match(await this.readCollection(id, "listDiscounts")) ?? {}))) throw new ApiFailure("Discount/event changed during preparation; do not write or replay");
-      if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, input.agendaItems)))) throw new ApiFailure("Discount links/items changed during preparation");
+      if (!isDeepStrictEqual(event, (await this.assertTarget(target)).event) || !isDeepStrictEqual(discountBusiness(before), discountBusiness(match(await this.readCollection(id, "listDiscounts")) ?? {}))) throw new ApiFailure("Discount/event changed during preparation; do not write or replay");
+      if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, checkedItems)))) throw new ApiFailure("Discount links/items changed during preparation");
     };
     const root = `/events/${id}/discounts/${before.id}`;
+    for (const item of input.removeAgendaItems ?? []) {
+      const key = this.itemKeys([item])[0]; if (!links.includes(key)) continue;
+      await assertBaseline();
+      const nextLinks = links.filter(existing => existing !== key);
+      const ack = await this.dispatch({ phase: "REMOVE_DISCOUNT_ITEM", method: "DELETE", expectedStatus: 204, path: `${root}/agenda-items/${item.id}`, baseline: before, discountId: before.id, agendaItem: item, existingLinks: links, expectedLinks: nextLinks }, beforeWrite, recordEvidence, assertBaseline);
+      if (ack !== null) throw new ApiFailure("Unexpected removal acknowledgment; keep uncertainty");
+      links = nextLinks;
+      await this.pollSaved(() => this.discountLinks(id, before.id), saved => isDeepStrictEqual(saved, links), recordEvidence);
+    }
     for (const item of input.agendaItems ?? []) {
       const key = this.itemKeys([item])[0]; if (links.includes(key)) continue;
       await assertBaseline();
-      const ack = await this.dispatch({ phase: "ADD_DISCOUNT_ITEM", method: "PUT", path: `${root}/agenda-items/${item.id}`, baseline: before, discountId: before.id, agendaItem: item, existingLinks: links }, beforeWrite, recordEvidence);
+      const ack = await this.dispatch({ phase: "ADD_DISCOUNT_ITEM", method: "PUT", path: `${root}/agenda-items/${item.id}`, baseline: before, discountId: before.id, agendaItem: item, existingLinks: links }, beforeWrite, recordEvidence, input.removeAgendaItems ? assertBaseline : undefined);
       if (ack !== null) throw new ApiFailure("Unexpected link acknowledgment; keep uncertainty");
       links = [...links, key].sort();
       await this.pollSaved(() => this.discountLinks(id, before.id), saved => isDeepStrictEqual(saved, links), recordEvidence);
     }
     await assertBaseline();
     let saved = before;
-    if (!isDeepStrictEqual(business(before), business(expected))) {
-      const ack = await this.dispatch({ phase: "UPDATE_DISCOUNT", method: "PUT", path: root, baseline: before, body, discountId: before.id }, beforeWrite, recordEvidence);
+    if (!isDeepStrictEqual(discountBusiness(before), discountBusiness(expected))) {
+      const ack = await this.dispatch({ phase: "UPDATE_DISCOUNT", method: "PUT", path: root, baseline: before, body, discountId: before.id, dateClearFields: clearedDates }, beforeWrite, recordEvidence, input.removeAgendaItems ? assertBaseline : undefined);
       if (ack?.id !== before.id) throw new ApiFailure("Discount acknowledgment has wrong identity; keep uncertainty");
-      saved = await this.pollSaved(async () => match(await this.readCollection(id, "listDiscounts")), row => !!row && isDeepStrictEqual(business(row), business(expected)), recordEvidence);
+      saved = await this.pollSaved(async () => match(await this.readCollection(id, "listDiscounts")), row => !!row && isDeepStrictEqual(discountBusiness(row), discountBusiness(expected)), recordEvidence);
     }
-    if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, input.agendaItems)))) throw new ApiFailure("Discount relationships/items did not preserve saved state");
+    if (!isDeepStrictEqual(links, await this.discountLinks(id, before.id)) || (catalog && !isDeepStrictEqual(catalog, await this.discountItemsSnapshot(id, checkedItems)))) throw new ApiFailure("Discount relationships/items did not preserve saved state");
+    if (input.removeAgendaItems) {
+      saved = match(await this.readCollection(id, "listDiscounts"));
+      if (!saved || !isDeepStrictEqual(discountBusiness(saved), discountBusiness(expected)) || !isDeepStrictEqual(links, desiredLinks)) throw new ApiFailure("Discount replacement did not preserve the requested properties/relationships; retain uncertainty");
+    }
     await this.assertTarget(target);
     return { route: "api", action: "updated", verified: true, requirementsSatisfied: true, differences: [], eventId: id, discountId: before.id, saved, links };
   }
@@ -560,11 +595,12 @@ export class CventConnection {
     const baseline = created.saved;
     // Refuse a newly returned, unreviewed field before any link/finalizing PUT.
     // This is initial configuration, not permission for a lossy overwrite.
-    (volume ? prepareVolumeDiscount : prepareDiscount)(input, baseline);
+    desired = (volume ? prepareVolumeDiscount : prepareDiscount)(input, baseline).body;
+    if (!volume) desired.applyToAllAgendaItems = true;
     const assertNewUnchanged = async () => {
       await this.assertTarget(target);
       const current = match(await this.readCollection(target.apiEventId, "listDiscounts"));
-      if (!current || current.id !== discountId || !isDeepStrictEqual(business(current), business(baseline))) throw new ApiFailure("New discount changed before initial configuration completed; keep uncertainty");
+      if (!current || current.id !== discountId || !isDeepStrictEqual(discountBusiness(current), discountBusiness(baseline))) throw new ApiFailure("New discount changed before initial configuration completed; keep uncertainty");
       if (!isDeepStrictEqual(catalog, await this.discountItemsSnapshot(target.apiEventId, items))) throw new ApiFailure("Discount item catalog changed during preparation; keep uncertainty");
       return current;
     };
@@ -593,7 +629,7 @@ export class CventConnection {
     const current = await assertNewUnchanged();
     if (!isDeepStrictEqual(await this.discountLinks(target.apiEventId, discountId), expectedLinks)) throw new ApiFailure("Discount links changed before finalization");
     const { credentials, token } = await this.authenticate();
-    await beforeWrite({ phase: "FINALIZE_NEW_DISCOUNT", method: "PUT", path: base, baseline: current, body: desired, discountId });
+    await beforeWrite({ phase: "FINALIZE_NEW_DISCOUNT", method: "PUT", path: base, baseline: current, body: desired, discountId, dateClearFields: dateClearFields(input.patch) });
     const response = await this.transport(credentials.baseUrl + base, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(desired) });
     let payload;
     try { payload = await response.json(); } catch { throw new ApiFailure("New discount finalization returned invalid JSON; keep uncertainty"); }
@@ -607,7 +643,7 @@ export class CventConnection {
       const links = await this.discountLinks(target.apiEventId, discountId);
       if (!isDeepStrictEqual(links, expectedLinks)) throw new ApiFailure("Finalized discount links did not preserve the requested item set");
       const expected = volume ? { ...baseline, ...desired } : { ...baseline, ...desired, capacity: { ...baseline.capacity, ...desired.capacity } };
-      const matched = !!saved && isDeepStrictEqual(business(saved), business(expected));
+      const matched = !!saved && isDeepStrictEqual(discountBusiness(saved), discountBusiness(expected)) && datesCleared(saved, input.patch);
       await recordEvidence({ phase: "FINAL_READBACK", discountId, matched, saved: saved ?? null, links });
       if (matched) {
         await this.assertTarget(target);

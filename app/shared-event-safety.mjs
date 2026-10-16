@@ -1,5 +1,6 @@
 import { readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { executionSafety } from './execution-clearance.mjs';
 import { evidencePresent, readSafetyEvidence, writeUncertainty } from './write-uncertainty.mjs';
 
 export const EVENT_SAFETY_PROTOCOL = 'shared-event-safety-v1';
@@ -23,7 +24,7 @@ export function eventHoldInventory(root, workspaceId, { requireEventLease = fals
       if (realpathSync(directory) !== directory) return result;
       const record = evidencePresent(join(directory, 'job.json')) ? readSafetyEvidence(directory, 'job.json') : null;
       if (record !== null && (!record || record.id !== id || Array.isArray(record) || !['UPLOADED', 'PREPARING', 'STARTING', 'RUNNING', 'STOPPING', 'STOPPED', 'INCOMPLETE', 'DONE', 'REVIEW_REQUIRED', 'CLEARED'].includes(record.status))) return result;
-      if (record !== null && !writeUncertainty(directory, record).blocked) continue;
+      if (record !== null && (!writeUncertainty(directory, record).blocked || executionSafety(root, id).historicalHoldRetired === true)) continue;
       // A partial/orphan job directory cannot be certified clean from absence of
       // its record. Keep it globally blocking even if no marker was recovered.
       const identities = [record?.target?.apiEventId, record?.target?.evtstub].filter(value => value !== undefined);

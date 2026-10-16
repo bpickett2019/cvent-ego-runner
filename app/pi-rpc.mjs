@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { RUN_SKILLS } from "./run-policy.mjs";
+import { GUARD_COMMAND } from "./diagnostic-guard.js";
 
 // Transport only: Pi owns reasoning, tools, sessions, retries, and cancellation.
 export class PiRpc extends EventEmitter {
@@ -18,7 +19,7 @@ export class PiRpc extends EventEmitter {
       throw new Error("Invalid PI_THINKING_LEVEL; native execution was not started");
     }
     const args = ["--mode", "rpc", "--approve", "--session-dir", `${workspace}/pi-sessions`, "--thinking", thinking,
-      "--no-context-files",
+      "--no-context-files", "--extension", join(cwd, "app/diagnostic-guard.js"),
       "--no-skills", ...RUN_SKILLS.flatMap(name => ["--skill", join(cwd, ".pi/skills", name, "SKILL.md")])];
     if (!env.PI_PROVIDER || !env.PI_MODEL) throw new Error("Launch from the working Pi environment (PI_PROVIDER and PI_MODEL required)");
     args.push("--provider", env.PI_PROVIDER, "--model", env.PI_MODEL);
@@ -76,6 +77,10 @@ export class PiRpc extends EventEmitter {
     });
   }
   async freshSession() {
+    const commands = (await this.request({ type: "get_commands" })).data?.commands;
+    if (!Array.isArray(commands) || !commands.some(command => command.name === GUARD_COMMAND && command.source === "extension")) {
+      throw new Error("Required diagnostic guard did not load; no AI prompt was sent");
+    }
     const { data } = await this.request({ type: "get_state" });
     if (data?.isStreaming !== false || data?.isCompacting !== false || data?.pendingMessageCount !== 0) throw new Error("Pi is not idle; refusing session reset");
     const response = await this.request({ type: "new_session" });

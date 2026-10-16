@@ -2,6 +2,11 @@ import { workspaceBase, workspacePath, scopedStorage } from './workspace-routing
 import { requirementProgress } from './requirement-progress.js';
 import { executionReadiness } from './execution-readiness.js';
 import { runOutcome } from './run-outcome.js';
+import { resultLanguage } from './result-language.js';
+import { bindRrFileInput } from './rr-file-input.js';
+import { createProgressEvidence, canCheckFinalReport, finalReportAvailability, evidenceNotice } from './progress-evidence.js';
+const progressEvidence = createProgressEvidence();
+let refreshSequence = 0;
 const basePath = workspaceBase(location.pathname);
 const appPath = path => workspacePath(basePath, path);
 const sessionStorage = scopedStorage(window.sessionStorage, basePath);
@@ -14,6 +19,7 @@ let workbook = null, draftLoading = false, edits = new Map(), previewEpoch = 0, 
 let historyReady = false, setupTargetEditable = false, operatorPauseSupported = false, workbookSaveContextRequired = false;
 let resetContextAvailable = false, workspaceResetSupported = false, authoritativeContext = false, rrContextId = sessionStorage.getItem('rrContextId');
 let readinessRequest = 0, readinessPending = false, readinessReadAt = 0;
+let readinessSnapshot = null, readinessSnapshotEpoch = null, readinessExpiry = null, reportCheck = null;
 const active = () => job && ["PREPARING", "STARTING", "RUNNING", "STOPPING"].includes(job.status);
 const canResumePaused = () => operatorPauseSupported && job?.status === 'RUNNING' && job.phase === 'AWAITING_INPUT' && job.waitingFor === 'operator' && typeof job.pauseId === 'string' && !!job.pauseId;
 const canEditSetupTarget = () => setupTargetEditable && job?.status === 'RUNNING' && job.phase === 'AWAITING_INPUT' && job.waitingFor === 'setup' && !job.aiStartedAt && browserOwnership === 'USER';
@@ -22,8 +28,108 @@ const statusLabel = status => ({ REVIEW_REQUIRED: "INCOMPLETE", FINISHED: "INCOM
 const money = value => Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
 const list = value => Array.isArray(value) ? value : value ? [value] : [];
 const node = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
-function renderList(id, values) {
-  $(id).replaceChildren(...(list(values).length ? list(values).map(value => node("li", typeof value === "string" ? value : value.message || JSON.stringify(value))) : [node("li", "None")]));
+function setText(element, value) {
+  const text = value == null ? '' : String(value);
+  if (element.textContent !== text) element.textContent = text;
+}
+function syncChildren(element, next) {
+  const top = element.scrollTop, left = element.scrollLeft, wanted = new Set(next);
+  for (const child of [...element.children]) if (!wanted.has(child)) element.removeChild(child);
+  next.forEach((child, index) => { if (element.children[index] !== child) element.insertBefore(child, element.children[index] || null); });
+  element.scrollTop = top; element.scrollLeft = left;
+}
+function renderList(id, values, showEmpty = true) {
+  const element = $(id), rows = list(values);
+  const labels = rows.length ? rows.map(value => typeof value === 'string' ? value : value?.message || JSON.stringify(value)) : showEmpty ? ['None'] : [];
+  const existing = new Map();
+  for (const child of element.children) {
+    const pool = existing.get(child.textContent) || []; pool.push(child); existing.set(child.textContent, pool);
+  }
+  syncChildren(element, labels.map(value => {
+    const text = value == null ? '' : String(value);
+    return existing.get(text)?.shift() || node('li', text);
+  }));
+}
+// Use requirement identity/source, never incidental words in a summary or question.
+const isDiscountResult = row => (row.evidence || []).some(({ label, value }) =>
+  label === 'Source' && /^\s*['"]?(?:\d+\s+)?(?:discount codes?|(?:volume|group) discounts?)['"]?\s*!/i.test(value) ||
+  label === 'Requirement' && /^\s*(?:discount(?:\s+code)?|(?:volume|group)\s+discount)\b/i.test(value));
+const resultDisclosures = new Map(), resultRows = new Map();
+let resultRenderKey = '', resultJobId = null;
+function renderNaturalResults(progress, checkpoints, outcome) {
+  const view = resultLanguage(progress), key = JSON.stringify([jobId, view, outcome?.complete]);
+  if (resultJobId !== jobId) {
+    resultDisclosures.clear(); resultRows.clear(); resultJobId = jobId;
+    $('pendingSection').open = true;
+  }
+  if (key === resultRenderKey) return view;
+  resultRenderKey = key;
+  const disclosure = (key, title, content) => {
+    const details = node('details', '');
+    details.className = 'result-details'; details.open = resultDisclosures.get(key) === true;
+    const owner = jobId;
+    details.ontoggle = () => { if (jobId === owner && details.isConnected !== false) resultDisclosures.set(key, details.open); };
+    details.append(node('summary', title), content); return details;
+  };
+  const renderRow = (row, member = false) => {
+    const li = node('li', ''); li.className = 'result-item';
+    if (member && row.subject) li.append(node('strong', row.subject));
+    else {
+      if (row.subject) li.append(node('strong', row.subject));
+      li.append(node('p', row.summary));
+    }
+    const more = node('div', ''); more.className = 'result-more';
+    if (row.actionNote) { const action = node('p', row.actionNote); action.className = 'result-action-note'; li.append(action); }
+    if (row.sourceNote) li.append(node('p', `Source: ${row.sourceNote}`));
+    if (row.remainingIssue) li.append(node('p', `Why: ${row.remainingIssue}`));
+    if (row.nextAction) { const next = node('p', `${row.nextActionLabel || 'Next'}: ${row.nextAction}`); next.className = 'result-next'; li.append(next); }
+    if (row.members.length) {
+      const members = node('ul', ''); members.className = 'result-list'; members.append(...row.members.map(x => renderRow(x, true)));
+      more.append(members);
+      li.append(disclosure(`${row.key}:members`, `See ${row.members.length} items`, more));
+    } else {
+      if (row.evidence.length) {
+        const dl = node('dl', ''); dl.className = 'result-evidence';
+        for (const field of row.evidence) dl.append(node('dt', field.label), node('dd', field.value));
+        more.append(disclosure(`${row.key}:raw`, 'Technical evidence', dl));
+      }
+      li.append(disclosure(`${row.key}:evidence`, 'More', more));
+    }
+    return li;
+  };
+  const sections = [
+    ['changed', view.changed, 'Saved'], ['pending', view.pending, 'Needs attention'],
+    ['existing', view.existing, 'Already Correct in CVENT'], ['excluded', view.excluded, 'Excluded'],
+    ['legacy', view.legacy, 'Notes'],
+  ];
+  const retainedRows = new Set();
+  for (const [name, rows, title] of sections) {
+    // Keep discounts inside their status category. Bring unfinished discounts to
+    // the top of Needs attention so they are visible without a separate section.
+    const displayRows = name === 'pending'
+      ? [...rows.filter(isDiscountResult), ...rows.filter(row => !isDiscountResult(row))]
+      : rows;
+    syncChildren($(`${name}Plain`), displayRows.map(row => {
+      const key = `${name}:${row.key}`, signature = JSON.stringify(row);
+      retainedRows.add(key);
+      let cached = resultRows.get(key);
+      if (!cached || cached.signature !== signature) {
+        cached = { signature, element: renderRow(row) }; resultRows.set(key, cached);
+      }
+      return cached.element;
+    }));
+    $(`${name}Section`).hidden = rows.length === 0;
+    setText($(`${name}ResultTitle`), `${title} (${rows.length})`);
+  }
+  for (const key of resultRows.keys()) if (!retainedRows.has(key)) resultRows.delete(key);
+  $('previewTechnical').hidden = !view.verificationOnly.length;
+  renderList('previewTechnicalList', view.verificationOnly.map(row => `${row.subject} — ${row.nextAction}`));
+  const unitemized = outcome && !outcome.complete && !checkpoints.pending.length;
+  $('resultMissingDetail').hidden = !unitemized;
+  $('resultMissingDetail').textContent = unitemized ? outcome.notes[0] : '';
+  $('plainResults').hidden = !unitemized && !sections.some(([, rows]) => rows.length);
+  $('technicalResults').hidden = !unitemized && !sections.some(([, rows]) => rows.length);
+  return view;
 }
 function message(text, error = false) { $("message").textContent = text; $("message").className = error ? "activity-error" : ""; }
 async function api(path, body, options = {}) {
@@ -32,13 +138,26 @@ async function api(path, body, options = {}) {
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 }
+function cachedReadiness() { return readinessSnapshotEpoch === previewEpoch ? readinessSnapshot : null; }
 function renderReadiness(value) {
-  const view = executionReadiness(value);
-  $('capacityStatus').textContent = view.capacity;
-  $('eventSafetyStatus').textContent = view.eventSafety;
-  $('safetyOwners').replaceChildren(...view.owners.map(owner => node('li', owner)));
-  $('safetyDetail').textContent = view.detail;
+  clearTimeout(readinessExpiry); readinessExpiry = null;
+  const now = Date.now(), checkedAt = Date.parse(value?.checkedAt);
+  // Retain only timestamps accepted by executionReadiness's existing age bounds.
+  // Never turn a rejected future timestamp into a valid observation just by waiting.
+  readinessSnapshot = Number.isFinite(checkedAt) && checkedAt <= now + 5000 && now - checkedAt <= 30000 ? value : null;
+  readinessSnapshotEpoch = previewEpoch;
+  const view = executionReadiness(readinessSnapshot, now);
+  setText($('capacityStatus'), view.capacity);
+  setText($('eventSafetyStatus'), view.eventSafety);
+  renderList('safetyOwners', view.owners, false);
+  setText($('safetyDetail'), view.detail);
   $('executionReadiness').setAttribute('data-warning', String(view.warning));
+  $('executionReadiness').setAttribute('data-checking', String(readinessPending));
+  $('readinessCheck')?.setAttribute('aria-hidden', String(!readinessPending));
+  if (readinessSnapshot) {
+    const snapshot = readinessSnapshot;
+    readinessExpiry = setTimeout(() => { if (readinessSnapshot === snapshot) renderReadiness(cachedReadiness()); }, checkedAt + 30001 - now);
+  }
 }
 function invalidateReadiness() {
   readinessRequest++; readinessPending = false; readinessReadAt = 0;
@@ -48,12 +167,41 @@ async function refreshReadiness(force = false) {
   if (submitting || stopping || takingControl || handoffPending) return;
   if (!force && (readinessPending || Date.now() - readinessReadAt < 10000)) return;
   const request = ++readinessRequest, epoch = previewEpoch;
-  readinessPending = true; renderReadiness(null);
+  readinessPending = true; renderReadiness(cachedReadiness());
   try {
     const value = await api('/api/execution-status', undefined, { cache: 'no-store', signal: AbortSignal.timeout(7000) });
     if (request === readinessRequest && epoch === previewEpoch) renderReadiness(value);
   } catch { if (request === readinessRequest && epoch === previewEpoch) renderReadiness(null); }
-  finally { if (request === readinessRequest) { readinessPending = false; readinessReadAt = Date.now(); } }
+  finally { if (request === readinessRequest) { readinessPending = false; readinessReadAt = Date.now(); renderReadiness(cachedReadiness()); } }
+}
+function renderReportStatus(snapshot, status, url) {
+  const link = $('results');
+  link.hidden = status !== 'available';
+  if (status === 'available') {
+    if (link.getAttribute('href') !== url) link.setAttribute('href', url);
+  } else if (link.hasAttribute('href')) link.removeAttribute('href');
+  const notice = evidenceNotice(snapshot, status);
+  setText($('progressEvidenceNotice'), notice); $('progressEvidenceNotice').hidden = !notice;
+}
+function updateReport(current, snapshot, requestedId, epoch) {
+  if (!requestedId || !canCheckFinalReport(current)) {
+    reportCheck = null; renderReportStatus(snapshot, 'not_ready', ''); return;
+  }
+  const key = `${basePath}:${requestedId}:${epoch}`;
+  if (reportCheck?.key !== key) reportCheck = { key, status: 'not_ready', pending: false, snapshot };
+  const check = reportCheck, url = appPath(`/api/jobs/${requestedId}/results/final-report.md`);
+  check.snapshot = snapshot;
+  // Keep the same run's last checked link/notice during a bounded background HEAD.
+  renderReportStatus(snapshot, check.status, url);
+  if (check.pending) return;
+  check.pending = true;
+  void finalReportAvailability(current, () => fetch(url, { method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(5000) })).then(status => {
+    check.pending = false;
+    if (reportCheck !== check || requestedId !== jobId || epoch !== previewEpoch) return;
+    if (!canCheckFinalReport(job)) { reportCheck = null; renderReportStatus(check.snapshot, 'not_ready', ''); return; }
+    check.status = status;
+    renderReportStatus(check.snapshot, status, url);
+  });
 }
 function editorControls() {
   const locked = submitting || stopping || draftLoading || !!active();
@@ -133,9 +281,11 @@ function renderWorkbook() {
 function renderCurrentRun(displayStatus) {
   // History remains private recovery/accounting evidence, not another execution context.
   const label = job ? `${job.originalName || 'Current RR'} · ${displayStatus || statusLabel(job.status)}` : workbook?.originalName || 'No current run';
-  $("jobSelect").replaceChildren(Object.assign(node("option", label), { value: jobId || "" }));
-  $("jobSelect").value = jobId || "";
-  $("jobSelect").disabled = true;
+  const select = $('jobSelect'), value = jobId || '';
+  if (select.children.length !== 1 || select.children[0].value !== value) select.replaceChildren(Object.assign(node('option', label), { value }));
+  else setText(select.children[0], label);
+  select.value = value;
+  select.disabled = true;
 }
 function clearRunView() {
   invalidateReadiness();
@@ -146,11 +296,18 @@ function clearRunView() {
     agentReply: '', question: '', elapsed: '00:00:00',
     elapsedLabel: 'AI execution · starts after verified Return',
     cost: 'No current run · prior spending retained',
-    completionTitle: 'No completed work reported', completionCount: '0 reported checkpoints',
+    completionTitle: 'No results yet', completionCount: '0 progress notes',
     completionMark: '•', outcomeSummary: '', pendingTitle: 'Remaining / blocked',
     browserStatus: 'BROWSER STOPPED', owner: 'USER CONTROL',
   };
   for (const [id, text] of Object.entries(blank)) $(id).textContent = text;
+  resultDisclosures.clear(); resultRows.clear(); resultRenderKey = ''; resultJobId = null; reportCheck = null;
+  $('resultsHeading').textContent = 'Progress'; $('runtimeDetails').hidden = false;
+  for (const name of ['changed', 'pending', 'existing', 'excluded', 'legacy']) { $(`${name}Plain`).replaceChildren(); $(`${name}Section`).hidden = true; $(`${name}Section`).open = false; }
+  $('plainResults').hidden = true; $('previewTechnical').hidden = true; $('previewTechnicalList').replaceChildren();
+  $('technicalResults').hidden = true; $('technicalResults').open = false;
+  progressEvidence.clear();
+  $('progressEvidenceNotice').textContent = ''; $('progressEvidenceNotice').hidden = true;
   for (const id of ['completed', 'pending', 'excluded', 'activity']) renderList(id, []);
   for (const id of ['results', 'questionPanel', 'progressLists', 'excludedProgress', 'securityConfirmation', 'outcomeSummary']) $(id).hidden = true;
   $("results").href = "";
@@ -174,7 +331,7 @@ function adoptReset(context) {
   if (context.workbookId) sessionStorage.setItem('rrWorkbookId', context.workbookId);
   $("rr").value = ""; $("eventName").value = ""; $("answer").value = ""; $("sessionInvalidated").checked = false;
   renderWorkbook(); clearRunView();
-  message('Current RR context reset confirmed. Historical event holds, evidence and spending are retained; check Execution readiness before Return.');
+  message('Current RR context changed. Check Execution readiness before Return; historical files and spending remain.');
 }
 async function loadSheet(sheet = 0, offset = 0) {
   if (!workbook || edits.size || draftLoading) return;
@@ -192,10 +349,10 @@ async function refresh() {
   // Readiness must not stay green merely because an unrelated runtime read hangs.
   void refreshReadiness();
   try {
-    const requestedId = jobId, epoch = previewEpoch;
+    const requestedId = jobId, epoch = previewEpoch, refreshId = ++refreshSequence;
     // Read the server's context before following cached job/workbook pointers.
     const runtime = await api('/api/runtime');
-    if (requestedId !== jobId || epoch !== previewEpoch) return;
+    if (requestedId !== jobId || epoch !== previewEpoch || refreshId !== refreshSequence) return;
     resetContextAvailable = Object.hasOwn(runtime, 'rrContext');
     workspaceResetSupported = runtime.workspaceResetSupported === true;
     authoritativeContext = resetContextAvailable && runtime.rrContext !== null;
@@ -209,13 +366,18 @@ async function refresh() {
       }
       rememberContext(context);
     }
-    const [current, progress] = await Promise.all([
+    const [current, snapshot] = await Promise.all([
       requestedId ? api(`/api/jobs/${requestedId}`) : Promise.resolve(null),
-      requestedId ? api(`/api/jobs/${requestedId}/results/state.json`).catch(() => ({})) : Promise.resolve({}),
+      progressEvidence.load(requestedId ? `${basePath}:${requestedId}` : null,
+        () => api(`/api/jobs/${requestedId}/results/state.json`, undefined, { signal: AbortSignal.timeout(5000) })),
     ]);
-    if (requestedId !== jobId || epoch !== previewEpoch) return;
+    if (requestedId !== jobId || epoch !== previewEpoch || refreshId !== refreshSequence) return;
     job = current;
-    const checkpoints = requirementProgress(progress), outcome = runOutcome(job, checkpoints);
+    const progress = snapshot.state, checkpoints = requirementProgress(progress);
+    let outcome = runOutcome(job, checkpoints);
+    if (snapshot.stale && outcome) outcome = { ...outcome, complete: false, icon: '!', label: 'Progress unavailable · saved run retained', summary: snapshot.warning, remaining: 'unconfirmed' };
+    // Independent single-flight report checks must not blink or starve behind the 2s poll.
+    updateReport(current, snapshot, requestedId, epoch);
     loginFirstAvailable = runtime.loginFirst === true;
     setupTargetEditable = runtime.setupTargetEditable === true;
     operatorPauseSupported = runtime.operatorPauseSupported === true;
@@ -249,7 +411,7 @@ async function refresh() {
     $("stage").textContent = executing ? reportedStage || "Executing RR" : active() ? progress.currentStage || job.phase : outcome?.label || statusLabel(job?.status) || "UPLOAD";
     const retiredStartupBlock = ended && job.stopReason?.startsWith("Operator decision required before a new RR:");
     $("action").textContent = retiredStartupBlock ? "This build stopped before AI under a retired startup rule. Upload a new RR to start fresh."
-      : ended ? `${job.stopReason || "Execution ended"}. ${job.status === "FINISHED" || job.status === "REVIEW_REQUIRED" ? "This historical run has no verified full-RR completion result." : job.executionSummary || "Saved execution results are available below."}`
+      : ended ? job.modelFailure?.message || job.stopReason || 'See the results below.'
       : executing ? reportedAction ? `Agent-reported: ${reportedAction}` : job.executionActivity ? `${job.executionActivity.at} · ${job.executionActivity.message}` : "Native Pi is working; saved results require separate verification."
       : job?.lastStartError || progress.currentAction || "Upload an RR and name the event you started.";
     $("agentReply").textContent = executing ? "" : job?.lastAssistantText || job?.intake?.summary || "";
@@ -258,23 +420,26 @@ async function refresh() {
     $("cost").textContent = runtime.budget?.resetId && !active()
       ? `${money(runtime.budget.spentUSD)} tracked since reset · ${spendingMode}${job ? ` · ${money(job.piCostUSD)} selected run` : ""}`
       : job ? `${money(job.piCostUSD)} this run · ${money(job.totalEventCostUSD)} including prior spending · ${spendingMode}` : `No current run · prior spending retained · ${spendingMode}`;
-    $("results").hidden = !job || !!job.modelFailure || (!!active() && Object.hasOwn(job, 'reportBeforeReturn'));
-    if (job) $("results").href = appPath(`/api/jobs/${job.id}/results/final-report.md`);
     renderCurrentRun(outcome?.label);
     const pending = outcome?.notes || checkpoints.pending;
     $('outcomeSummary').hidden = !outcome;
     $('outcomeSummary').textContent = outcome?.summary || '';
     $('pendingTitle').textContent = outcome?.heading || 'Remaining / blocked';
     $('completionMark').textContent = outcome?.icon || '•';
+    $('resultsHeading').textContent = outcome ? 'Results' : 'Progress';
+    $('runtimeDetails').hidden = !!outcome && !job.modelFailure && !['STOPPED', 'STOPPED_REQUIRES_REVIEW'].includes(job.status);
+    const displayedResults = renderNaturalResults(progress, checkpoints, outcome);
     renderList("completed", checkpoints.completed); renderList("pending", pending);
     renderList("excluded", checkpoints.excluded);
     $("excludedProgress").hidden = !checkpoints.excluded.length;
     renderList("activity", Array.isArray(job?.activity) ? job.activity.slice(-100).reverse().map(entry => `${entry.at} · ${entry.message}`) : list(progress.activity).slice(-10).reverse());
     const count = checkpoints.completed.length;
-    $("completionTitle").textContent = outcome?.label || (count ? "Agent-reported progress" : "No completed work reported");
-    $("completionCount").textContent = checkpoints.mode === 'requirements'
-      ? `${checkpoints.changedCount} changed · ${checkpoints.existingCount} existing matches · ${outcome?.remaining ?? checkpoints.pending.length} remaining · ${checkpoints.excluded.length} excluded · not independent acceptance`
-      : `${count} reported checkpoints · not independent acceptance`;
+    $("completionTitle").textContent = outcome?.label || (count ? "Progress" : "No results yet");
+    $("completionCount").textContent = snapshot.stale ? 'Progress unavailable · remaining work unconfirmed' : checkpoints.mode === 'requirements'
+      ? displayedResults.verificationOnly.length
+        ? `${displayedResults.changed.length} saved · ${displayedResults.existing.length} already correct in CVENT · ${displayedResults.attentionCount} ${displayedResults.attentionCount === 1 ? 'setting needs' : 'settings need'} attention · ${displayedResults.excluded.length} excluded`
+        : `${checkpoints.changedCount} changed · ${checkpoints.existingCount} already correct in CVENT · ${typeof outcome?.remaining === 'string' ? 'work left: unknown' : `${outcome?.remaining ?? checkpoints.pending.length} left`} · ${checkpoints.excluded.length} excluded`
+      : `${count} progress notes`;
     $("progressLists").hidden = !count && !pending.length && !checkpoints.excluded.length;
     const executionStart = job?.aiStartedAt || (job?.workflow !== "login-first" ? job?.startedAt : null);
     const executionEnd = active() ? Date.now() : Date.parse(job?.finishedAt || job?.updatedAt || executionStart);
@@ -334,7 +499,7 @@ async function newRR(file = null) {
       : ['RELEASED', 'EMPTY'].includes(result.sharedSlotStatus) ? ' No execution reservation remains for this workspace.'
       : result.sharedSlotStatus === 'OTHER_WORKSPACE' ? ' Another workspace owns execution capacity and was not changed.' : ' Check Execution readiness for capacity.';
     message((file ? 'New RR saved with fresh context; your target was kept. Start Build creates a clean browser; AI starts only after verified Return.'
-      : 'Workspace cleared. No AI session was started.') + slotNote + ' Historical event reviews, files and costs remain; other workspaces are untouched.', result.sharedSlotStatus === 'REVIEW_REQUIRED');
+      : 'Workspace cleared. No AI session was started.') + slotNote + ' Settled historical holds are retired for fresh runs; original evidence, saved Cvent changes and costs remain. Other workspaces are untouched.', result.sharedSlotStatus === 'REVIEW_REQUIRED');
   } catch (error) {
     $("rr").value = "";
     message(`${error.message}${file ? " · New RR was not selected. Your prior workbook, edits and target are retained. Any completed Stop remains in effect." : " · Clear was not confirmed. Your RR selection is retained; any completed Stop remains in effect."}`, true);
@@ -342,7 +507,11 @@ async function newRR(file = null) {
   finally { submitting = false; await refresh(); }
 }
 $("newRR").onclick = () => newRR();
-$("rr").onchange = () => { const file = $("rr").files?.[0]; if (file) return newRR(file); };
+bindRrFileInput({
+  zone: document.querySelector('.upload-zone'), input: $("rr"), document,
+  isBusy: () => !historyReady || submitting || stopping || draftLoading || takingControl,
+  onFile: file => newRR(file), onError: text => message(text, true),
+});
 $("upload").onclick = async () => {
   if (!historyReady || submitting || draftLoading || active() || edits.size || !loginFirstAvailable) return;
   const file = $("rr").files?.[0];
@@ -481,6 +650,9 @@ async function configureLocalWorkspaces() {
   const { localWorkspaceConfig } = await import('./workspace-config.js');
   localWorkspaces = localWorkspaceConfig(await response.json(), location.origin, location.pathname);
   workspaceLabel = localWorkspaces.label;
+  $('signOut').hidden = !localWorkspaces.sessionLogin;
+  $('signOut').href = '/logout?next=' + encodeURIComponent(`/workspaces/${localWorkspaces.current}/`);
+  $('signOut').onclick = event => { if (edits.size && !confirm('Leave this workspace and discard unsaved workbook edits? Signing out does not stop running builds.')) event.preventDefault(); };
   document.title = `Forge · ${workspaceLabel} · ${localWorkspaces.staging ? 'Staging' : 'Local'} workspace`;
   const switcher = document.querySelector('.workspace-switcher');
   switcher.dataset.localMulti = 'true';
@@ -549,6 +721,7 @@ async function initialize() {
   } catch (error) { message(error.message, true); }
 }
 initialize();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) renderReadiness(cachedReadiness()); });
 let refreshTicks = 0;
 // These are local UI reads, never Pi calls. Waiting/idle refresh is only every 10s.
 setInterval(() => {

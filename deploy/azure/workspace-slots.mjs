@@ -13,7 +13,8 @@ function proof(value, owner) {
   if (value?.version !== 1 || value.jobId !== owner.jobId || typeof value.resourcesCleared !== 'boolean' || typeof value.uncertaintyBlocked !== 'boolean' ||
       !Array.isArray(value.resourceBlockers) || !Array.isArray(value.uncertaintyBlockers) ||
       value.resourcesCleared !== (value.resourceBlockers.length === 0) || value.uncertaintyBlocked !== (value.uncertaintyBlockers.length > 0) ||
-      value.cleared !== (value.resourcesCleared && !value.uncertaintyBlocked)) fail('CLEARANCE_UNAVAILABLE', owner);
+      value.cleared !== (value.resourcesCleared && !value.uncertaintyBlocked) ||
+      value.historicalHoldRetired !== undefined && (typeof value.historicalHoldRetired !== 'boolean' || value.historicalHoldRetired && !value.resourcesCleared)) fail('CLEARANCE_UNAVAILABLE', owner);
   return value;
 }
 export function createWorkspaceSlots({ directory, clearance, resolveTarget, collectInventories, now = Date.now }) {
@@ -72,7 +73,7 @@ export function createWorkspaceSlots({ directory, clearance, resolveTarget, coll
   }
   async function cleanup(owner, rows) {
     let value; try { value = proof(await clearance(owner), owner); } catch (e) { if (e instanceof ExecutionSlotError) throw e; fail('CLEARANCE_UNAVAILABLE', owner); }
-    if (value.uncertaintyBlocked && !rows[owner.workspace - 1].holds.some(h => h.jobId === owner.jobId || h.jobId === null)) fail('SHARED_EVENT_SAFETY_UNAVAILABLE');
+    if (value.uncertaintyBlocked && value.historicalHoldRetired !== true && !rows[owner.workspace - 1].holds.some(h => h.jobId === owner.jobId || h.jobId === null)) fail('SHARED_EVENT_SAFETY_UNAVAILABLE');
     return value;
   }
   return {
@@ -86,7 +87,7 @@ export function createWorkspaceSlots({ directory, clearance, resolveTarget, coll
       const own = states.find(s => s.owner.workspace === workspace), blockingLegacy = old && states.at(-1)?.resourcesCleared !== true;
       return { holder: own ? { workspace, jobId: own.owner.jobId } : null,
         resourcesCleared: blockingLegacy ? states.at(-1).resourcesCleared : own?.resourcesCleared ?? true,
-        uncertaintyBlocked: own?.uncertaintyBlocked ?? false,
+        uncertaintyBlocked: own?.historicalHoldRetired === true ? false : own?.uncertaintyBlocked ?? false,
         reservations: states.map(s => ({ workspace: s.owner.workspace, jobId: s.owner.jobId, resourcesCleared: s.resourcesCleared })),
         current: () => { try { return equal(read(), before) && equal(legacy(), old); } catch { return false; } } };
     },

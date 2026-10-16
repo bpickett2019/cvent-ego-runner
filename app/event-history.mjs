@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { budgetTotals } from './budget.mjs';
+import { executionSafety } from './execution-clearance.mjs';
 import { apiOperationBlocked } from './api-operation-lease.mjs';
 import { evidencePresent, readSafetyEvidence, writeUncertainty } from './write-uncertainty.mjs';
 export function assertProcessGone(pid) {
@@ -25,8 +26,10 @@ export function eventHistory(jobsRoot, currentId, target, policy) {
     const ids = [record?.target?.apiEventId, record?.target?.evtstub].filter(value => value !== undefined);
     const bound = ids.length && ids.every(value => typeof value === 'string' && value.length) && new Set(ids).size === 1 ? ids[0] : null;
     // Unknown/conflicting identity cannot be scoped away. Event UUID, not name,
-    // binds the hold; new uploads/accounting resets never erase it or replay it.
-    if (uncertainty.blocked && (!bound || bound === target.apiEventId || bound === target.evtstub)) {
+    // binds the hold. Only a committed explicit fresh reset can retire a
+    // settled historical hold; accounting resets and new job IDs cannot.
+    const retired = uncertainty.blocked && executionSafety(join(root, '../..'), id).historicalHoldRetired === true;
+    if (uncertainty.blocked && !retired && (!bound || bound === target.apiEventId || bound === target.evtstub)) {
       const owner = /^[0-9a-f-]{36}$/.test(id) ? id : '(unidentified historical run)';
       throw new Error(`Prior run ${owner} has unresolved write/operation evidence for this event or an unconfirmed event identity. Read-only reconciliation is required; no new AI started and no holds were cleared.`);
     }

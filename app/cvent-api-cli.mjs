@@ -33,9 +33,9 @@ async function main() {
   }
   if (operation === "capabilities") {
     console.log(JSON.stringify({ operations, blockedOperations, locking: { protocol: API_LOCK_PROTOCOL, requiresCompatibleJob: true }, maintenanceOperations: { probeBulkAccess: { mode: "human-only-empty-job-access-check", confirmation: "--confirm-empty-job", limitation: "No records, run, cancellation or event writes. Actual bulk execution is not exposed." } }, writeCapabilities: {
-      configureDiscount: { mode: "event-only-create-or-update", supports: ["final-total and item-scoped codes", "existing event-level values and additive AdmissionItem/QuantityItem links"], limitations: ["no link removal; exact code; 1–100 scoped items"] },
-      configureVolumeDiscount: { mode: "event-only-create-or-update", supports: ["named volume rules and additive scoped links"], limitations: ["no link removal; exact name; explicit threshold semantics"] }
-    }, preservation: "Fixed selected event/name and Draft; no deletion/archive, shared edits, other-event effects, communications or attendee access. Shared creation requires documented isolation; no isolated shared create route established in this adapter.", browser: "Assigned Ego/Steel for authorized non-discount configuration; never bypass uncertainty or protected-operation denials", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
+      configureDiscount: { mode: "event-only-create-or-update", supports: ["final-total and item-scoped codes", "existing event-level values and AdmissionItem/QuantityItem links", "explicit removeAgendaItems with observed discountId and nonempty desired agendaItems"], limitations: ["no whole-discount deletion; no implicit link removal; exact code; 1–100 final scoped items; fully retargeting an active rule requires prior verified deactivation"] },
+      configureVolumeDiscount: { mode: "event-only-create-or-update", supports: ["named volume rules and scoped links", "explicit removeAgendaItems with observed discountId and nonempty desired agendaItems"], limitations: ["no whole-discount deletion; no implicit link removal; exact name; explicit threshold semantics; fully retargeting an active rule requires prior verified deactivation"] }
+    }, preservation: "Fixed selected event/name and Draft; only explicit event-discount item unlinking, no whole-object deletion/archive, shared edits, other-event effects, communications or attendee access. Shared creation requires documented isolation; no isolated shared create route established in this adapter.", browser: "Assigned Ego/Steel for authorized non-discount configuration; never bypass uncertainty or protected-operation denials", documentation: resolve(new URL("../CVENT-API.md", import.meta.url).pathname) }));
     return;
   }
   if (Object.hasOwn(blockedOperations, operation)) throw new ApiFailure(blockedOperations[operation]);
@@ -106,7 +106,16 @@ async function main() {
         prepared.phase === "UPDATE_DISCOUNT" && prepared.path === `${root}/${prepared.discountId}` ||
         prepared.phase === "ADD_DISCOUNT_ITEM" && data.agendaItems?.some(item => isDeepStrictEqual(item, prepared.agendaItem)) && prepared.path === `${root}/${prepared.discountId}/agenda-items/${prepared.agendaItem.id}`
       );
-      if (!(discountOperation && (create || link || finalize || existingDiscount)) || sentPaths.has(`${prepared.method} ${prepared.path}`)) throw new ApiFailure("Prepared write is outside the scoped operation or was already dispatched; no replay");
+      const remove = discountOperation && prepared?.phase === "REMOVE_DISCOUNT_ITEM" && prepared.method === "DELETE" && prepared.expectedStatus === 204 &&
+        prepared.baseline?.level === "EVENT" && prepared.baseline.type === (volume ? "VOLUME_DISCOUNT" : "DISCOUNT_CODE") && prepared.baseline[identityKey] === data[identityKey] &&
+        prepared.discountId === prepared.baseline.id && data.discountId === prepared.discountId && (!prepared.baseline.event?.id || prepared.baseline.event.id === job.target.apiEventId) && data.createIfMissing !== true &&
+        ["AdmissionItem", "QuantityItem"].includes(prepared.agendaItem?.type) && Array.isArray(data.agendaItems) && data.agendaItems.length > 0 &&
+        data.removeAgendaItems?.some(item => isDeepStrictEqual(item, prepared.agendaItem)) && !data.agendaItems.some(item => item.id === prepared.agendaItem.id) &&
+        Array.isArray(prepared.existingLinks) && prepared.existingLinks.includes(`${prepared.agendaItem.type}:${prepared.agendaItem.id}`) &&
+        isDeepStrictEqual(prepared.expectedLinks, prepared.existingLinks.filter(key => key !== `${prepared.agendaItem.type}:${prepared.agendaItem.id}`)) &&
+        typeof prepared.baseline.active === "boolean" && (!prepared.baseline.active || prepared.expectedLinks.length > 0) &&
+        prepared.path === `${root}/${prepared.discountId}/agenda-items/${prepared.agendaItem.id}` && !Object.hasOwn(prepared, "body");
+      if (!(discountOperation && (create || link || finalize || existingDiscount || remove)) || sentPaths.has(`${prepared.method} ${prepared.path}`)) throw new ApiFailure("Prepared write is outside the scoped operation or was already dispatched; no replay");
       if (!Array.isArray(input.rrReferences) || !input.rrReferences.length || !input.rrReferences.every(value => typeof value === "string" && value.trim())) throw new ApiFailure("API writes require RR source references");
       await checkControl();
       sentPaths.add(`${prepared.method} ${prepared.path}`);

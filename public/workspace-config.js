@@ -1,4 +1,4 @@
-// Local development navigation only; never an authentication/tenant boundary.
+// Workspace navigation only; never an authentication/tenant boundary.
 export function localWorkspaceConfig(value, currentOrigin, pathname = '/') {
   const staging = value?.mode === 'staging';
   if (value?.version !== 1 || ![1, 2, 3].includes(value.current) || !Array.isArray(value.workspaces) || value.workspaces.length !== 3) throw new Error('Invalid local workspace configuration');
@@ -13,5 +13,5 @@ export function localWorkspaceConfig(value, currentOrigin, pathname = '/') {
   });
   const expected = staging ? currentOrigin + `/workspaces/${value.current}/` : currentOrigin;
   if (new Set(workspaces.map(w => w.url)).size !== 3 || workspaces[value.current - 1].url !== expected || (staging && !pathname.startsWith(`/workspaces/${value.current}/`))) throw new Error('Workspace origin/identity mismatch');
-  return { current: value.current, label: `USER ${value.current}`, workspaces, staging };
+  return { current: value.current, label: `USER ${value.current}`, workspaces, staging, sessionLogin: staging && value.sessionLogin === true };
 }

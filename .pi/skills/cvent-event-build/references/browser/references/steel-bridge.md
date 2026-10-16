@@ -113,8 +113,11 @@ or select another browser or profile to resolve a missing host capability.
   selector must identify an explicit save rejection, not merely a validation count.
   Correct an RR-backed issue only when the UI establishes the prior save was rejected
   without persistence; a validation indicator or helper result alone grants no replay.
-  No observable outcome, contradictory signals, loss of control or observation error
-  causes `BrowserSaveUncertainError` and a private `browser-save-uncertain.json` marker.
+  Loading/missing-body observations use a structured NOT_READY result; recognized
+  transient context reads are retried within the existing observation deadline.
+  No resolved outcome by that deadline, contradictory signals, lost control or a
+  non-recoverable observation error causes `BrowserSaveUncertainError` and a
+  private `browser-save-uncertain.json` marker.
   That marker blocks both browser/API writes and DONE; read-only evidence remains
   available. The controller checks the current job's marker at tool/settlement
   boundaries and on its two-second monitor, independently of shell exit status.
@@ -122,16 +125,20 @@ or select another browser or profile to resolve a missing host capability.
   tool for historical uncertainty. The app's uncertainty stop has no automatic retry.
 - For the bound RR build, create or modify existing objects,
   settings and relationships only when their effects are confined to the selected
-  event, including admission items and pricing. No shared/account-wide object,
-  definition or default changes under this build. Reuse exact shared matches.
+  event, including admission items and pricing. Existing shared/account-wide
+  definitions and defaults remain protected. Any missing-contact-type creation
+  follows the separate capability-gated registration-and-pricing exception;
+  this does not authorize existing shared edits/removals. Reuse exact matches.
   Prove scope before writing: an event URL or a newly created template alone
   does not prove isolation. Event-only type/path
   assignments differ from shared contact-type definitions. Unknown scope blocks
   the affected change; continue independent safe work.
-  Never delete/archive anything, including new objects, widgets, rules or links.
+  Necessary in-scope event-exclusive object removal/replacement is authorized by ../../change-policy.md. The current browser adapter lacks a verified object-removal operation and its existing deletion guard remains closed until one is implemented. This is a capability blocker, not a blanket business prohibition. Event deletion/archive, shared changes and evidence deletion remain prohibited.
   This authorization does not unlock blocked navigation or operations. Do not probe
   or bypass a guard; report the specific tool limitation. Keep the event Draft.
-- Pi chooses editor order and task grouping. Verify saved values and dependencies;
+- Follow the full configuration order in ../../operating-model.md: Event details
+  before Registration Types and the remaining scheduled stages. Pi chooses supported
+  controls within each stage, not a different stage order. Verify saved values and dependencies;
   creating a new template does not prove field isolation. A concrete blocker skips
   dependent work, not independent executable requirements.
   In Site Designer, Continue retains current work; Restore can replace it. Do not
