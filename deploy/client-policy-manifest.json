@@ -1,0 +1,116 @@
+{
+  "precedingStagingCommit": "8d727a1fbf07ced56d1126e31a4f9dfef4ebc35a",
+  "scope": "instruction/reference changes and two frontend presentation files only",
+  "runtimeGuardsChanged": false,
+  "discountAdapterChanged": false,
+  "changes": [
+    {
+      "path": ".pi/skills/cvent-event-build/SKILL.md",
+      "operation": "modify",
+      "beforeSha256": "35e0a41190627b9433e9bfbba8f70b3864651343fad627979c9ecbc33a4aaddf",
+      "afterSha256": "34431110c1f9941a18831c266f814a208c55b11969e1c391572760a7c81a5a44"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/assets.md",
+      "operation": "delete",
+      "beforeSha256": "1b3e5126eb84336942dc2b9791f445dcdb024416fce2b746d5d138e605d902a7",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/browser/references/steel-bridge.md",
+      "operation": "modify",
+      "beforeSha256": "13b30dcc7981ff9e269f1544ee68d201791600fde0f7e917b27d348b9897c2ec",
+      "afterSha256": "0ddbbd728c0b82949bc23b2ecfb60fedcc015fe4cb1b16b544787c3404a754c0"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/change-policy.md",
+      "operation": "modify",
+      "beforeSha256": "713568c098c9f73ed0d0533c8c079166771f14c8319908e813a2bc465f4eb988",
+      "afterSha256": "789610ec620e2a91295d0044ea840b050a307c72f2b08933572515757028f6c9"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/discounts.md",
+      "operation": "modify",
+      "beforeSha256": "2d88ab3c6c3cf3489547dc52af8c98ab1cae46ffbd21beab903f5c977f98f18d",
+      "afterSha256": "428aa2e550dd67dd113536fb815a8b636c5ec5182fa78de42937ea5a139ee79b"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/operating-model.md",
+      "operation": "delete",
+      "beforeSha256": "cb12abc2cebec3edc6ae0ef4a612b18a831158aa56b5244982b166dbbb122bc1",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/registration-and-pricing.md",
+      "operation": "delete",
+      "beforeSha256": "7cb95284e8704364272e6006ac7d437bc874ffc49e6d4d7c0dadceac391090e5",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/registration-type-mapping-guide-v2.md",
+      "operation": "delete",
+      "beforeSha256": "471b2f4a4dd3cd87f7a1adf3704f24ecc9e61a96e9d9782049182d11627ead3b",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/rr-interpretation.md",
+      "operation": "modify",
+      "beforeSha256": "6e3004a206c598c25af5daf18fbe96f7101e20e8b6cbe4a97b921a0e3664a8e5",
+      "afterSha256": "c15fe585ec1ea9dd1b418c8043a813e20d7d7bbc7ba1200a5055ed9e121c5511"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/runner-contract.md",
+      "operation": "modify",
+      "beforeSha256": "37177becbc1f5e0e6db1c165375634d6bbca057a1c2e7d62050a451ad449f969",
+      "afterSha256": "f55b93c626ef472264d8e107d89f6b4e8c36cabd850eecf8195025584b3610e6"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/runner-integration.md",
+      "operation": "modify",
+      "beforeSha256": "40f1c461bad2e457fcd15fdba1f94d9fa1e7b4fd6b7cb7ecac24466784da919b",
+      "afterSha256": "de27571fba94569e97472205ecc4e1feaacc35cc84dae91e8ddd9ff4b204da6c"
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/scope-and-intake.md",
+      "operation": "delete",
+      "beforeSha256": "49f13225b85b9d12b369b28ebc86870aa6326e895c869940c12602e7edfe337d",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/verification.md",
+      "operation": "delete",
+      "beforeSha256": "c3cb7c3c5c38c1bd3d6db1687870469d9f7bffb3f848eb7de125f04b9c719466",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/vouchers-and-rules.md",
+      "operation": "delete",
+      "beforeSha256": "5965d9523f8b87999b3bbc3fcec84ff129e6c492c3559b77bd7fafd4be40e087",
+      "afterSha256": null
+    },
+    {
+      "path": ".pi/skills/cvent-event-build/references/website-and-fields.md",
+      "operation": "delete",
+      "beforeSha256": "de168dc3be99b96e48c0cedde97d3bccf311cf85edbc67b7f3a9d48f04280b21",
+      "afterSha256": null
+    },
+    {
+      "path": "app/native-task.md",
+      "operation": "modify",
+      "beforeSha256": "26119564489a1167c34e89b6c4a9f8bef74e12c467326ff66cc4599730f29705",
+      "afterSha256": "49280736bda07753cb4cf8a8b0695a33a58ca36119a787276464651d3be386c5"
+    },
+    {
+      "path": "public/app.js",
+      "operation": "modify",
+      "beforeSha256": "6ddc18f2175561e8db09118571e26dffa03855b47b1b8b6f263eaabff479b63d",
+      "afterSha256": "838c5c7eb1fedbfbd18ce6d858bd6e7694459899c081ac4e73a54dd1f199676f"
+    },
+    {
+      "path": "public/run-outcome.js",
+      "operation": "modify",
+      "beforeSha256": "a022262aae3aa127640e79452bfe3ecdf164958889ecebe22b6c968e3559c7f8",
+      "afterSha256": "bd0d92dfc6b59ad0f8ae2a63f9509a38e06b2a1f690562c4d5e6ca5ec7461609"
+    }
+  ]
+}

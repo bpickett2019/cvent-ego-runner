@@ -4,16 +4,17 @@ A supervised, pre-release runner for configuring an explicitly selected unpublis
 
 This public checkpoint contains application source, skills, tests and reusable deployment tooling. Customer workbooks, native transcripts, browser profiles, credentials, run data, costs, private operator handoffs and one-time incident/recovery scripts are not part of the checkpoint. Source publication is not live deployment or commercial acceptance.
 
-Current source checkpoint: see [staging source notes](docs/STAGING-SOURCE.md) and
-`deploy/staging-source-manifest.json`. These describe verified installed source,
-not a clean-clone recipe or live Cvent acceptance.
+Current source policy: [client-approved configuration rules](docs/CLIENT-BUILD-POLICY.md).
+The preceding verified staging checkpoint is documented in [staging source notes](docs/STAGING-SOURCE.md)
+and `deploy/staging-source-manifest.json`. The new payload is enumerated in
+`deploy/client-policy-manifest.json`; Git publication alone does not prove deployment.
 
 ## Workflow
 
 1. Upload an XLSX workbook, preview it and explicitly select an existing event by its exact name. Original uploads are immutable; edits create versions.
 2. Start Build provisions a fresh assigned local Steel browser. It does not launch Pi or a paid model prompt.
 3. A human signs in and explicitly returns control. Source integrity, event/API/browser identity, ownership and safety are verified before one fresh Pi session starts.
-4. One `cvent-event-build` skill and its references guide interpretation, event-details-first configuration in the skill's required order, and saved verification. Clear source differences are implemented; missing essential inputs and unsupported operations block their dependents while independent work continues.
+4. The client-approved `cvent-event-build` skill defines included tabs, defaults, conflict decisions and order. Apply those decisions, independently verify saved configuration and continue independent work around item failures. Registration previews are not part of this build.
 5. Review the result: DONE, INCOMPLETE or STOPPED. Processing finished is not the same as full completion. The runner checks report consistency and safety; an agent's report is not independent commercial sign-off.
 
 ## Workspace isolation and concurrency
@@ -32,17 +33,17 @@ The authenticated staging gateway's shared login is not per-person authorization
 
 - One Pi process/session and one assigned Ego/local Steel browser per build; no additional review agent or wrapper-driven reprompt.
 - The native launcher explicitly loads only `.pi/skills/cvent-event-build/SKILL.md`, excluding unrelated/global skills and development context files.
-- The guarded API executable authorizes discount/volume-discount writes and supported dependency reads. Broader library methods are not RR tool permissions. Other authorized configuration uses the assigned browser.
+- The guarded API executable supports discount/volume operations, but this build includes discount codes only. Volume Discounts, Optional Items, Sessions, Emails, Code Snippets, Theme selection and non-admission fees are excluded. Other included configuration uses the assigned browser.
 - No publishing, attendee creation/access, communications, payments, session/speaker authoring, arbitrary account administration, event deletion/archive, retargeting or bypass of tool denials. Event-only discount item-association replacement is supported; whole-question, choice and discount deletion is not.
 - Human login and incident attestations remain human actions. Do not extract cookies or credentials.
-- Missing business values are not guessed. Names, codes, display text, formulas, comments and field-specific blank conventions retain source-backed meaning. Optional unrequested settings are preserved and disclosed, not fabricated requirements or completed-work credit.
+- The skill's approved required-creation defaults and judgment rules resolve business gaps. Record original source, chosen values, governing rules and saved evidence; prominently disclose placeholder prices/text. Existing blank fields and unlisted leftovers are preserved. No default bypasses a tool denial.
 - Genuine uncertain writes, identity/control loss, cleanup failure and unknown spending remain safety stops. A note in a report cannot clear them.
 
 These instructions and guards are not an arbitrary-shell security sandbox.
 
 ## Results and costs
 
-The UI keeps individually named requirements, source/action/reason/next-step details and unfinished discounts first inside Needs attention. Dashboard polling retains freshness-bounded readiness and stable report links; unchanged rows preserve scroll/disclosure state. These checks do not establish rendered-browser acceptance.
+The UI keeps individually named requirements, source/action/reason/next-step details and unfinished discounts first inside Needs attention. New-policy DONE reads configuration saved; registration testing not performed. Existing historical results are not relabeled as tested or converted from partial to complete. Dashboard freshness, stable links, scroll and disclosures remain preserved.
 
 Native costs are sampled and retained per run and historically. Automatic dollar limits are disabled. Legacy allowance/reserve fields and time/cost targets are metadata, not enforced caps. Native Pi/provider retries and compaction may consume tokens. Multiple simultaneous builds incur independent charges; hosting and delayed external usage are not a complete part of the model meter.
 

@@ -7,28 +7,33 @@ only. A diagnostic rejected before execution exposed nothing: use the safe helpe
 or proceed with permitted independent work, without retrying the dump another way.
 Actual secret exposure, operator Stop and uncertain writes still require Stop.
 
-Implement the uploaded RR in authorizedEvent using
-.pi/skills/cvent-event-build/SKILL.md.
-Read every worksheet contextually; cover admission items, pricing and discounts.
-Follow the skill's authoritative scope/change policy. Before authoring, record every
-in-scope requirement with source, expected values and a named, truthful progress
-summary. Keep unattempted, blocked and partially verified work explicit; do not
-omit discounts or other unfinished items, or claim an absent final report exists.
-The RR defines the target configuration; live Cvent is the starting state.
-Required configuration order: Event → Registration Types → Admission Items →
-Sessions (SKIPPED: out of scope) → Optional Items → Fees → Discount Codes →
-Volume Discounts → Website → Footer Links → Registration Paths → Questions →
-Emails (SKIPPED: out of scope) → Code Snippets (SKIPPED: out of scope).
-Configure answer choices immediately after their questions within Questions.
-Event includes RR-specified event-local location, dates, times and other details;
-never change the selected event title/name or ID, and keep it unpublished Draft.
-Follow the operating model for blocked requirements and later-stage dependencies;
-this order never overrides safety stops or authorizes excluded work.
-Follow the registration reference's create-only contact-type scope.
-Record missing inputs or known unsupported requirements and continue independent
-safe work. Execute and verify saved results, not merely inspect or recommend.
+Implement this job's bound workbook in authorizedEvent using
+.pi/skills/cvent-event-build/SKILL.md. That skill is the authoritative client business
+policy, including included tabs, defaults, conflict decisions, order and completion.
+It does not override executable restrictions or authorize a different event.
 
-Use the guarded Cvent API adapter for discount reads and writes, and the assigned
-Ego/Steel browser for other Cvent work. Follow the skill's operating boundaries
-and runner contract.
-Obey ownership and operator Stop. Never replay unresolved writes or bypass holds.
+Read references/change-policy.md, references/rr-interpretation.md,
+references/runner-integration.md and references/runner-contract.md relative to that
+skill before acting. Read references/browser/controls.md before browser work and
+references/discounts.md plus "$CVENT_API_GUIDE" before discount calls. These are
+technical references for this one session, not additional agents or competing
+business policy. Use only the assigned executables, workbook/version and event.
+
+Record each included requirement, original source values, approved decisions and
+intended saved result before authoring. Keep individual unfinished items explicit.
+Follow the exact order in SKILL.md; answer choices immediately follow each question.
+Apply the approved defaults and precedence instead of blocking on a decision the
+skill already supplies. Continue independent work around ordinary item failures.
+
+Verify saved configuration and relationships, not registration behavior. Do not run
+registration previews or submit registrations. Record registration testing as not
+performed, outside this build's acceptance; do not convert that exclusion into a
+preview-only blocker. Preserve Draft, selected event title/ID and shared objects.
+Report every save made through a concurrent-editor warning; the warning alone is
+not a stop, but no tool denial or uncertain operation may be bypassed.
+
+Maintain the runner contract's technical record and plain-English report. Machine
+status remains DONE, INCOMPLETE or STOPPED. DONE means configuration saved under the
+approved build rules, not tested registration or human acceptance. Preserve existing
+ownership, Stop, uncertainty and accounting gates; never replay unresolved writes,
+resume a stopped job or change runtime evidence to continue. No other build starts.

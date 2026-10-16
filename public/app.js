@@ -374,7 +374,7 @@ async function refresh() {
     if (requestedId !== jobId || epoch !== previewEpoch || refreshId !== refreshSequence) return;
     job = current;
     const progress = snapshot.state, checkpoints = requirementProgress(progress);
-    let outcome = runOutcome(job, checkpoints);
+    let outcome = runOutcome(job, checkpoints, progress?.completionPolicy);
     if (snapshot.stale && outcome) outcome = { ...outcome, complete: false, icon: '!', label: 'Progress unavailable · saved run retained', summary: snapshot.warning, remaining: 'unconfirmed' };
     // Independent single-flight report checks must not blink or starve behind the 2s poll.
     updateReport(current, snapshot, requestedId, epoch);

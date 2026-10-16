@@ -1,51 +1,134 @@
 ---
 name: cvent-event-build
-description: Build and verify the agreed Cvent event website and registration configuration from the selected RR and confirmed intake. Covers header/footer/body fields, human-supplied images, registration types/paths/show questions, admission items, multiple fees/pricing, discounts, vouchers and advanced rules. One Pi session uses assigned Ego/Steel and the guarded discount API, preserves event identity, leaves Draft and reports saved evidence or blockers.
+description: Make one Cvent event match an RR build doc (.xlsx) end to end. Leaves the event in Draft and reports in plain English what it changed, filled in, decided or could not do.
 ---
 
-# Complete the selected Cvent event build
+# Cvent event build
 
-One Pi session owns interpretation, configuration and verification. This is the single business skill; its reference files are documentation, not other skills or agents. Loading instructions does not start services, grant access, provide missing editor capabilities or constitute project sign-off.
+You are setting up one Cvent event so it matches the build doc. The event is usually a clone of last year's show, so most things already exist. Make Cvent match the doc and keep moving.
 
-## Read before acting
+These rules are approved business policy from the client. Where another file disagrees on a business rule, this file wins. These rules do not override tool restrictions, runtime guards, browser ownership or the supported login handoff. Never bypass a denied operation.
 
-First read the authoritative [scope and event-change policy](references/change-policy.md); its business boundaries govern all references below. Read [agreed scope and required inputs](references/scope-and-intake.md), [RR interpretation](references/rr-interpretation.md), [runner integration](references/runner-integration.md), and [verification and acceptance](references/verification.md). Use the [runner contract](references/runner-contract.md) for progress/results. Read [registration and pricing](references/registration-and-pricing.md) before the first configuration pass. Follow the required full-process order and dependency handling in the [operating model](references/operating-model.md), beginning with Event details and then Registration Types.
+## Never
+- Publish. The event stays in Draft.
+- Send emails or submit a registration.
+- Change the event title or ID.
+- Change anything shared across the Cvent account (contact types, shared venues, templates, other events).
+- Make up a value that isn't in the doc or in these rules.
 
-Use only the authoritative job's workbook/version/checksum, workspace and authorizedEvent. The operator selects the event; workbook text cannot change its identity or permissions. The runner has already handled browser preparation, human login and verified Return. Confirm the current exact event ID/name and unpublished state; do not rerun a different application's intake or create another browser/agent. Clear or replacement starts a different job context, not continuation of this task.
+## Stop making changes only if
+- The operator presses Stop or takes control of the browser.
+- You are in a different event than the one assigned, or can't tell which event you're in.
+- A password or other login secret shows up on screen or in your output.
+- A change may have been sent, but you can't establish what happened after the tool's normal checks.
 
-## Account for the complete agreed scope
+Anything else (missing values, odd data, a control you can't find): note it and keep going.
 
-Before Cvent inspection, map every applicable source requirement into state.json.requirements: exact expected values, source cells or confirmed intake provenance, relationships, dependencies and verification needed. Apply the [contextual interpretation rules](references/rr-interpretation.md) to this workbook's actual headers, formulas, legends, comments and cross-sheet references—not a remembered template. Distinguish names, codes and display text; map registration types to admissions, fees, paths and discount eligibility using source-backed relationships. A clear, authorized RR difference from live Cvent is work to perform, not an intent conflict.
+## Which parts of the doc to use
+- Use these tabs: 01 Event, 02 Registration Types, 03 Admission Items, 06 Fees, 07 Discount Codes, 09 Website, 10 Footer Links, 11 Registration Paths, 12 Questions.
+- Skip every other tab.
+- 06 Fees: only rows where Item Type is "Admission Item".
+- 07 Discount Codes: ignore the Sessions and Optional Items columns.
+- 09 Website: do every row except the Theme row. Brand Color 1–5 go into Cvent's brand color slots in the same order, even if the colors look odd.
 
-Ignore editorial highlight colors and color-status legends as execution signals. Process highlighted rows normally; do not skip work, seek clarification, infer approval or assign completion based only on color, even if a legend gives that color a status. Follow written values, instructions and comments, with genuine conflicts, missing essential information and tool/safety limitations handled normally. This does not ignore requested website/branding color values or numeric/date formatting; see the RR interpretation policy.
+## How to read a cell
+- Filled cell: make Cvent match it.
+- Blank cell on something that already exists in Cvent: leave Cvent as it is.
+- Blank cell on something you are creating, where Cvent requires a value: use the fill-in values below.
+- Anything in Cvent that isn't in the doc (last year's leftovers): leave it alone.
+- Column names are Cvent's field names.
+- Reg types and admission items may be written by code or name. Match by code first. Ignore spaces around `|` when matching names.
+- Several values in one cell are separated by `;` or a new line.
+- Dates are mm/dd/yyyy. Times are h:mm AM/PM. Money is a plain number.
+- "None" in a date field means no date limit. On something that exists, clear that date. When creating, leave it off.
+- The show name is the Event Title on 01 Event. Replace `<Insert Show Name Here>` (or any similar placeholder) with it. This does not change the event's title in Cvent.
+- Instructions in a Notes cell (hide an answer, link some text, add a checkbox) are part of the job. Do them.
 
-Account for each scope category without manufacturing requirements from the checklist. Explicitly requested/disabled settings and necessary dependencies require verification; optional unrequested settings are preserved and disclosed separately, not awarded completion credit or automatically marked blocked. Blank is not a universal off, unlimited or not-applicable instruction. Standing operator default: a genuinely blank optional start/end date on requested in-scope configuration means no restriction on that side, as defined in [RR interpretation](references/rr-interpretation.md). Other blanks still require evidenced field-specific semantics. A supplied, approved baseline may govern only its stated categories and must be verified; never invent baseline approval from existing Cvent values. Missing essential inputs and genuine material conflicts still block their dependents. Revisit the original RR before finishing to catch omissions in your own plan.
+## Capacity (no limit)
+When a cell says "Unlimited", or you are creating something that requires a capacity and the cell is blank:
+- If the Cvent field has an unlimited option, use it.
+- Discount codes through `$CVENT_API_BIN`: use `-1` (the API's unlimited). It rejects anything above 32767.
+- Any other capacity field: use `100000` as the approved fallback. If the field rejects it, note it.
+- Never use 0, because 0 blocks registration.
 
-Required configuration order: **Event → Registration Types → Admission Items → Sessions (SKIPPED: out of scope) → Optional Items → Fees → Discount Codes → Volume Discounts → Website → Footer Links → Registration Paths → Questions → Emails (SKIPPED: out of scope) → Code Snippets (SKIPPED: out of scope)**. Configure answer choices immediately after their questions within Questions. Verify the selected event first, then configure its RR-specified event-local details without changing its title/name or ID. Inspect, configure and independently verify each applicable stage in this order; reuse exact saved matches. Source interpretation and necessary read-only prerequisite discovery may precede authoring, but do not author later stages early because their tools are easier. Follow the operating model for deferred relationships and blockers; this is a configuration order, not a hardcoded selector script or permission to bypass safety gates.
+## Fill-in values (only when Cvent requires a value and the doc is blank)
+- Fee Name: the item's name.
+- Codes: `NULL-` plus the item's name in capital letters and numbers only (e.g. `NULL-EXPOONLY`). If it's longer than the field allows, cut it to fit. If a different item already uses it, add `-2`, then `-3`, and so on. Before creating anything, check whether an earlier run already created it with that code, and reuse it.
+- Other text: `NULL`.
+- Money and other numbers: `0`.
+- Yes/No: `No`.
+- Dates: start = today, end = one year from today.
 
-If a required type cannot be completed safely, record its source-backed blocker, finish the other executable types and proceed only with work that does not depend on the blocked type. Do not let one missing type prevent an independent website requirement. Create only confirmed missing objects; never invent suffixes, duplicate substitutes or claim relationships without verification.
+## When the doc disagrees with itself
+Don't stop. Use these rules:
+- Which path a reg type is on: use 11 Registration Paths. If no path on 11 lists it, use the path named on 02.
+- Registration approval: use 11 Registration Paths.
+- End date earlier than start date: move the end date to the following year.
+- The same answer listed twice: create it once and use the first code.
+- An answer code that's missing or used twice: create the answer and leave its code blank.
+- A reg type that isn't on 02 (e.g. `ATT`): if exactly one reg type clearly matches, use it. If not, skip that whole fee or assignment. Never let a missing reg type turn into "everyone."
+- A discount that lists Admission Items and also says "The Final total": attach the listed items. Set "Apply this discount to" as written if the tool allows both. If it doesn't, keep the items.
+- A question under "Path Not Given": put it on the path whose questions it fits best.
 
-Read the relevant reference before operating in its area:
-- [Website and fields](references/website-and-fields.md): banner/billboard/progress options; footer theme, resources/social/contact; body links/contact block and the four profile fields.
-- [Assets and human upload](references/assets.md): source folder/location/filename, intended Cvent folder/filename and independently verified placement.
-- [Registration and pricing](references/registration-and-pricing.md): registration overview/types/paths, show/registration questions and answer choices, admission names/codes/Expo differences and all associated fees/prices/toggles.
-- [Registration Type Mapping Guide v2](references/registration-type-mapping-guide-v2.md): optional supporting context for unfamiliar/unclear legacy registration names/codes, not an override of the event RR. Consult only when needed under the RR interpretation rules.
-- [Discounts](references/discounts.md): codes and group/volume discounts, exact values and complete eligibility/associations through the guarded API.
-- [Vouchers and rules](references/vouchers-and-rules.md): explicit per-event enable/disable intent, redemption and conditional behavior.
-- [Assigned browser controls](references/browser/controls.md) and [Steel bridge](references/browser/references/steel-bridge.md): documented operations and actual host restrictions. The assigned bridge overrides generic desktop examples.
+Anything not covered here: choose the reading closest to what the doc says, and put it in the report.
 
-Discover current editors/selectors through Ego. The user-supplied Details → Registration Types → Edit route in the registration reference is a navigation hint to confirm, not permission to use stale selectors. Preserve source literals and semantic amounts/dates; never invent missing prices, dates, asset choices, rule definitions or any of the four progress-option labels. Missing essential inputs, known unsupported features and ordinary pre-write navigation/selector errors are not reasons to end the build: record the affected requirement and dependents, re-observe supported controls where appropriate, and continue independent authorized work. First try to resolve interpretation from this workbook's evidence; apply comments only to their demonstrated scope. If a material conflict remains, record both sources, the precise decision needed and affected dependencies rather than asking for routine choices or invalidating unrelated rows. An uncertain external write is different: stop mutations and preserve its evidence; a note cannot unlock a runtime safety hold.
+## Order
+Event → Registration Types → Admission Items → Fees → Discount Codes → Website → Footer Links → Registration Paths → Questions (answer choices right after each question).
 
-## Execute and verify, not just inspect
+If one thing fails, note it and move on.
 
-Use "$CVENT_API_BIN" only for supported discount reads/writes and authorized dependency reads; use "$EGO_BROWSER_BIN" on the assigned Steel session for other configuration. Do not substitute raw HTTP, another browser or a different transport after a denial. Admission pricing and vouchers are not discount codes. Registration-type Advanced Filters unsupported by the adapter must block the affected discount before any write, not broaden eligibility.
+## Making changes
+- Discounts go through `$CVENT_API_BIN`. Everything else goes through `$EGO_BROWSER_BIN`.
+- Look first. If Cvent already matches the doc, move on.
+- If Cvent warns that someone else is editing, save anyway and keep working. List each of these saves in the report so someone can check nothing was overwritten.
+- Save once. Wait until Cvent shows the save finished or was rejected.
+- Browser edits: after the save finishes, reopen or reload the page and check the saved value.
+- Discounts: use the API tool's own check of the saved result.
+- If the value matches the doc, it's done.
+- Before any retry, make sure the earlier change has settled and check whether it already created or changed the item. Retry once at most, and only if the tool allows a safe retry. Then note it.
+- Never repeat a change whose outcome you don't know. Wait and check again. If you still can't tell, stop making changes (see "Stop making changes only if").
+- Navigate from the event's left menu, never from a saved link.
+- If you get logged out, pause and ask the operator to log back in, then continue where you stopped.
 
-For each change, preserve the relevant baseline, apply source-backed edits, Save once, observe a positive completion/rejection, independently read back saved values/relationships, then verify required behavior in non-persisting preview. Pending/uncertain Save is not permission to reload or replay. Keep the requirement unverified until evidence supports it; failed behavior prevents completion even when fields saved.
+## Footer Links (10)
+- "Registration Path / Site" says which footer the row belongs to.
+- Add that footer's links in the Order column's order. Each row is one link: Link Text, then its URL or email.
+- "Attendee / Press" = the Attendee | Buyer, Attendee | Buyer | Preapproved and Press/Media paths.
+- "Exhibitor" = the Exhibitor path.
+- Paths not named keep their current footer.
 
-Human asset uploads remain human work under this scope. Record missing deliveries and continue independent work; do not claim the intake UI has fields it does not expose. Coordinate any human action through supported app ownership controls; no fabricated handoff, login flag or runtime state.
+## Questions (12)
+- Each path block lists that path's questions in page order.
+- A question listed under several paths is one question in Cvent, placed on each of those paths.
+- "Display if Reg Type = X" = only those reg types see it.
+- "Display if CODE = answer" = shows only when that answer is picked.
+- "Display Sub-Question if CODE = Any Value" = a sub-question of CODE.
+- Answer codes are in Notes as "Answer Codes: …", in the same order as the answers.
+- "Backend Only" questions: create them, but don't place them on any path.
 
-## Boundaries and completion
+## Report
+Use the format in references/runner-contract.md.
 
-Preserve event ID/name, unrelated configuration and existing shared definitions. The sole create-only contact-type exception authorized by the user is defined in [registration and pricing](references/registration-and-pricing.md): an exact RR-required missing type may be created through the observed event registration-type editor and assigned to this event, without editing an existing shared definition or another event. This does not create attendee/contact records or authorize arbitrary account administration. If authoritative JOB.executionCapabilities.sharedContactTypeCreation is false, the create-only exception is unavailable for this build: reuse existing definitions and record a missing shared type as a dependency for operator provisioning outside overlapping builds. Do not open a new-contact-type dialog, use another transport or broaden scope to bypass this concurrent-mode restriction; continue independent safe work. No publishing, attendee access/registration submission, payments, communications, Sessions/Speakers, account administration, credential access/changes, cloning/resetting/deleting/archiving events or other shared-account/template changes. Necessary in-scope event-exclusive object deletion/replacement is authorized under change-policy.md; unsupported removal remains a capability blocker, not an exclusion. RR-specified event-local location/venue, dates, times and other event details are in scope; never change the event title/name or ID or edit a shared venue definition. Email settings and Code Snippets remain excluded. Follow all runner ownership, Stop, identity, uncertainty and accounting gates; never edit locks or job/runtime state to force progress.
+The reader is not technical and is juggling 20 other events. Write so a third grader could follow it and fix things:
+- Short sentences and everyday words. No code, no jargon.
+- Never use cell addresses like "C15" in the written report. Name the tab, the row (by its reg type, question or item name) and the column.
+- Keep the technical details (exact cells, original doc values, Cvent IDs, saved-value evidence, each unfinished item) in the technical record that references/runner-contract.md asks for.
+- For every item, say what happened, why, and how to fix it.
 
-Read [verification](references/verification.md) before final reporting. Write DONE only when every applicable agreed requirement, relationship, required preview behavior and Draft state is verified with no blockers, untested requirements or uncertainty. Otherwise report INCOMPLETE or STOPPED with exact unmet requirements and evidence. Configuration fixtures, skill coverage, installation and an agent's DONE report are not commercial sign-off; that requires human review of representative live evidence.
+Examples:
+> **Expo Only fee for Exhibitor / Paid**: The Fee Name was empty, so I named it "Expo Only" so the fee could be saved. To change it: open the Fees tab, find the Expo Only row for EXPAID, and type the name you want in the Fee Name column.
+
+> **Independent Rep/Dealer/Broker**: The Registration Types tab puts it on the Internal path, but the Registration Paths tab puts it on Attendee | Buyer. I used Attendee | Buyer. If that's wrong, fix whichever tab is wrong so they agree.
+
+Sections:
+- **Done:** what you changed, plus a count of things that already matched.
+- **I filled in a blank:** each blank you filled, what you put and why. Put placeholder prices ($0) and NULL text first, since visitors would see them.
+- **I made a judgment call:** each place the doc disagreed with itself or was unclear, what you chose and why.
+- **Not done:** anything you couldn't do, why, and what to check or fix.
+- **Not included in this build:** Sessions, Optional Items, Volume Discounts, Emails, Code Snippets and the Theme.
+- **Please check:** I did not test the live registration pages. Click through each path once to make sure questions, prices and footers show for the right people.
+
+Set the status to one of these:
+- `DONE` when "Not done" is empty. Show it as: "Configuration saved under the approved build rules. Registration testing was not performed."
+- `INCOMPLETE` when "Not done" has items.
+- `STOPPED` when you stopped making changes. Give the reason in one plain sentence.

@@ -111,8 +111,9 @@ or select another browser or profile to resolve a missing host capability.
   Completion/rejection results have `verified: false`: inspect validation and
   independently establish saved values/connections before proceeding. A rejection
   selector must identify an explicit save rejection, not merely a validation count.
-  Correct an RR-backed issue only when the UI establishes the prior save was rejected
-  without persistence; a validation indicator or helper result alone grants no replay.
+  Correct an approved-policy issue only when the tool establishes a settled, safe
+  retry with prior effects checked; a validation indicator or helper result alone
+  grants no replay. Observe the skill's limit of at most one safe retry.
   Loading/missing-body observations use a structured NOT_READY result; recognized
   transient context reads are retried within the existing observation deadline.
   No resolved outcome by that deadline, contradictory signals, lost control or a
@@ -126,9 +127,9 @@ or select another browser or profile to resolve a missing host capability.
 - For the bound RR build, create or modify existing objects,
   settings and relationships only when their effects are confined to the selected
   event, including admission items and pricing. Existing shared/account-wide
-  definitions and defaults remain protected. Any missing-contact-type creation
-  follows the separate capability-gated registration-and-pricing exception;
-  this does not authorize existing shared edits/removals. Reuse exact matches.
+  definitions and defaults remain protected. The current business policy prohibits
+  shared contact-type creation as well as shared edits/removals. Reuse existing
+  definitions; configure only supported event-local assignments.
   Prove scope before writing: an event URL or a newly created template alone
   does not prove isolation. Event-only type/path
   assignments differ from shared contact-type definitions. Unknown scope blocks
@@ -136,8 +137,8 @@ or select another browser or profile to resolve a missing host capability.
   Necessary in-scope event-exclusive object removal/replacement is authorized by ../../change-policy.md. The current browser adapter lacks a verified object-removal operation and its existing deletion guard remains closed until one is implemented. This is a capability blocker, not a blanket business prohibition. Event deletion/archive, shared changes and evidence deletion remain prohibited.
   This authorization does not unlock blocked navigation or operations. Do not probe
   or bypass a guard; report the specific tool limitation. Keep the event Draft.
-- Follow the full configuration order in ../../operating-model.md: Event details
-  before Registration Types and the remaining scheduled stages. Pi chooses supported
+- Follow the configuration order in ../../../SKILL.md: Event details
+  before Registration Types and the remaining included stages. Pi chooses supported
   controls within each stage, not a different stage order. Verify saved values and dependencies;
   creating a new template does not prove field isolation. A concrete blocker skips
   dependent work, not independent executable requirements.
@@ -169,7 +170,11 @@ or select another browser or profile to resolve a missing host capability.
   Raw HTTP/standalone API helpers and non-discount API writes are not authorized.
   Never bypass an API denial or uncertain write through the browser.
   The Cvent skills' operating boundaries govern authorization; SDK capabilities
-  do not expand it.
+  do not expand it. The current SKILL.md supplies business decisions/defaults and
+  configuration-only acceptance. No registration preview is required. The technical
+  readback, ownership, uncertainty and Save restrictions above remain in force.
+  A concurrent-editor banner alone follows the skill's save-and-disclose policy;
+  an actual denied operation or uncertain write may never be bypassed.
 
 The patch is also saved as `ego-bridge/patches/steel-session-ledger.patch` so
 it survives a fresh submodule checkout. From the project root, on an unpatched
